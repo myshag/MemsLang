@@ -120,8 +120,9 @@ static void velocity(const double *phi, const unsigned char *mask,
                      const double *vis, double *poly, double *V,
                      int nx, int nz, double dx, int j_box, double R_ion,
                      double R_iso, double sel, double footing, double strip,
-                     double dt, int mode) {
-    double inv_dx = 1.0 / dx, band = 2.5 * dx, eps = 0.02;
+                     double dt, int mode, double passiv, double bow,
+                     int surf_j) {
+    double inv_dx = 1.0 / dx, band = 4.5 * dx, eps = 0.02;
     #pragma omp parallel for schedule(static)
     for (int j = 0; j < nz; j++)
         for (int i = 0; i < nx; i++) {
@@ -141,13 +142,32 @@ static void velocity(const double *phi, const unsigned char *mask,
                 if (poly[k] < 0.0) poly[k] = 0.0;
                 if (poly[k] > eps) continue;        /* still protected */
                 double rate = R_ion * aniso * (0.3 + 0.7 * v);
+                /* ion-scattering lateral widening at the drilling front,
+                 * growing with absolute depth -> re-entrant / negative taper
+                 * (applied once per depth level as the front passes) */
+                if (bow > 0.0) {
+                    double df = (double)(j - surf_j) /
+                                (double)(j_box - surf_j + 1);
+                    if (df < 0.0) df = 0.0; else if (df > 1.0) df = 1.0;
+                    rate += bow * df * R_iso * dmax(0.0, fabs(gx) / gn);
+                }
                 if (mask[k]) rate /= sel;
                 V[k] = rate;
             } else {
-                if (poly[k] > eps) continue;         /* sidewall protected */
-                double rate = R_iso * v;
-                if (j >= j_box - 3 && j < j_box)     /* footing at oxide */
-                    rate += footing * R_iso * v * dmax(0.0, fabs(gx) / gn);
+                double rate;
+                if (poly[k] <= eps) {
+                    /* freshly de-passivated bottom: full isotropic etch */
+                    rate = R_iso * v;
+                    if (j >= j_box - 3 && j < j_box) /* footing at oxide */
+                        rate += footing * R_iso * v * dmax(0.0, fabs(gx) / gn);
+                } else {
+                    /* protected sidewall: residual lateral etch from
+                     * imperfect passivation.  The top is exposed for the most
+                     * cycles, so it widens most -> positive taper (narrowing
+                     * downward); lower passivation = stronger positive taper */
+                    double vert = dmax(0.0, fabs(gx) / gn - dmax(0.0, -gz / gn));
+                    rate = (1.0 - passiv) * R_iso * v * vert;
+                }
                 if (mask[k]) rate /= sel;
                 V[k] = rate;
             }
@@ -156,7 +176,7 @@ static void velocity(const double *phi, const unsigned char *mask,
 
 static void vis_field(const double *phi, double *vis, int nx, int nz,
                       double dx, int nang, double maxlen) {
-    double band = 3.0 * dx;
+    double band = 5.0 * dx;
     #pragma omp parallel for schedule(static)
     for (int j = 0; j < nz; j++)
         for (int i = 0; i < nx; i++) {
@@ -169,7 +189,8 @@ static void vis_field(const double *phi, double *vis, int nx, int nz,
 void bosch_run(double *phi, const unsigned char *mask, int nx, int nz,
                double dx, int j_box, double R_ion, double R_iso, double sel,
                double footing, int ncycles, int n_aniso, int n_iso,
-               double dt, int reinit_iters, int vis_angles, double vis_maxlen)
+               double dt, int reinit_iters, int vis_angles, double vis_maxlen,
+               double passiv, double bow, int surf_j)
 {
     int n = nx * nz;
     double *V = malloc(sizeof(double) * n);
@@ -178,22 +199,26 @@ void bosch_run(double *phi, const unsigned char *mask, int nx, int nz,
     double *g = malloc(sizeof(double) * n);
     double *poly = calloc(n, sizeof(double));
     double strip = 3.0 / dt;                     /* polymer cleared fast */
+    /* reinit only every STRIDE substeps: frequent reinit drifts the
+     * interface backward (kills etch rate) and smooths out scalloping */
+    int stride = reinit_iters > 0 ? reinit_iters : 6;
+    int sc = 0;
     for (int c = 0; c < ncycles; c++) {
         vis_field(phi, vis, nx, nz, dx, vis_angles, vis_maxlen);
         deposit(phi, poly, nx, nz, dx, 1.0);     /* passivation step */
         for (int s = 0; s < n_aniso; s++) {
             velocity(phi, mask, vis, poly, V, nx, nz, dx, j_box,
-                     R_ion, R_iso, sel, footing, strip, dt, 0);
+                     R_ion, R_iso, sel, footing, strip, dt, 0, passiv, bow, surf_j);
             advect(phi, V, g, nx, nz, dx, dt);
-            reinit(phi, tmp, nx, nz, dx, 1);
+            if (++sc % stride == 0) reinit(phi, tmp, nx, nz, dx, 2);
         }
         for (int s = 0; s < n_iso; s++) {
             velocity(phi, mask, vis, poly, V, nx, nz, dx, j_box,
-                     R_ion, R_iso, sel, footing, strip, dt, 1);
+                     R_ion, R_iso, sel, footing, strip, dt, 1, passiv, bow, surf_j);
             advect(phi, V, g, nx, nz, dx, dt);
-            reinit(phi, tmp, nx, nz, dx, 1);
+            if (++sc % stride == 0) reinit(phi, tmp, nx, nz, dx, 2);
         }
-        if (reinit_iters > 0) reinit(phi, tmp, nx, nz, dx, reinit_iters);
     }
+    reinit(phi, tmp, nx, nz, dx, 2);             /* final clean-up */
     free(V); free(vis); free(tmp); free(g); free(poly);
 }

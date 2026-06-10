@@ -77,6 +77,35 @@ class TestAnalyticLimits(unittest.TestCase):
         self.assertLess(r.scallop_um, 2.0)
 
 
+class TestTaper(unittest.TestCase):
+    """Sidewall taper sign must be controllable: passivation-starved etching
+    widens the long-exposed top (positive taper / narrowing downward); ion
+    scattering with depth widens the bottom (negative taper / bowing)."""
+
+    def _taper(self, passivation, bow):
+        r = etch.simulate([(12, 20)], domain_w=40, depth=16, dx=0.1,
+                          recipe=etch.BoschRecipe(
+                              cycles=24, etch_per_cycle=0.85,
+                              passivation=passivation, bow=bow,
+                              scallop_um=0.12), box_at=30)
+        return r.tapers[0]
+
+    def test_positive_taper_narrows(self):
+        self.assertGreater(self._taper(0.25, 0.0), 0.5)
+
+    def test_negative_taper_bows(self):
+        self.assertLess(self._taper(0.99, 0.6), -2.0)
+
+    def test_taper_sign_separates(self):
+        pos = self._taper(0.25, 0.0)
+        neg = self._taper(0.99, 0.6)
+        self.assertGreater(pos - neg, 3.0, (pos, neg))
+
+    def test_bow_monotonic(self):
+        # stronger bow -> more negative (re-entrant) taper
+        self.assertLess(self._taper(0.99, 0.6), self._taper(0.99, 0.3) + 0.5)
+
+
 class TestNumerics(unittest.TestCase):
     def test_no_nan_and_bounded(self):
         r = _depth(8.0, cycles=24)

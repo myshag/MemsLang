@@ -48,9 +48,15 @@ def _load_lib():
             ctypes.c_int, ctypes.c_int, ctypes.c_double, ctypes.c_int,
             ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
             ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double,
-            ctypes.c_int, ctypes.c_int, ctypes.c_double]
+            ctypes.c_int, ctypes.c_int, ctypes.c_double,
+            ctypes.c_double, ctypes.c_double, ctypes.c_int]
         _LIB = lib
     return _LIB
+
+
+# the band/reinit-limited scheme advances the front at ~half of V*dt per
+# cycle; this constant makes ``etch_per_cycle`` read as um/cycle
+_RATE_CAL = 2.5
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +68,11 @@ class BoschRecipe:
     r_iso: float = 0.18             # isotropic (radical) rate, relative
     selectivity: float = 75.0       # Si:mask etch ratio
     footing: float = 1.5            # lateral boost at the oxide interface
+    scallop_um: float = 0.12        # lateral isotropic bulge per cycle (um)
+    passivation: float = 0.92       # sidewall protection (1 = perfect)
+    bow: float = 0.0                # depth-increasing sidewall etch: >0 gives
+                                    # negative taper / bowing, =0 positive taper
+    reinit_stride: int = 2          # reinit every N substeps (drift control)
     arde_angles: int = 28           # rays for the visibility (ARDE) factor
 
 
@@ -76,6 +87,7 @@ class EtchResult:
     depths: List[float] = field(default_factory=list)        # per opening, um
     widths: List[float] = field(default_factory=list)
     reached_box: List[bool] = field(default_factory=list)
+    tapers: List[float] = field(default_factory=list)   # deg, + = narrowing
     scallop_um: float = 0.0
     footing_um: float = 0.0
 
@@ -86,9 +98,13 @@ class EtchResult:
             ar = self.depths[k] / max(self.widths[k], 1e-6)
             flag = "reached BOX" if self.reached_box[k] else \
                 "ARDE-LIMITED (did not reach BOX -> region stays anchored)"
+            tp = self.tapers[k]
+            sign = "positive/narrowing" if tp > 0.3 else \
+                ("negative/bowing" if tp < -0.3 else "vertical")
             out.append(
                 "etch   opening %d: width %.1f um -> depth %.1f um "
-                "(AR %.1f) %s" % (k, self.widths[k], self.depths[k], ar, flag))
+                "(AR %.1f) taper %+.1f deg (%s) %s"
+                % (k, self.widths[k], self.depths[k], ar, tp, sign, flag))
         out.append("etch   scalloping ~%.2f um, footing undercut ~%.2f um"
                    % (self.scallop_um, self.footing_um))
         return out
@@ -106,10 +122,11 @@ def simulate(openings: List[Tuple[float, float]], domain_w: float,
     oxide sits at ``box_at`` (default: just below the target depth).
     """
     recipe = recipe or BoschRecipe()
-    nx = max(8, int(round(domain_w / dx)))
-    nz = max(8, int(round((depth + mask_thick + 4 * dx) / dx)))
-    j0 = int(round((mask_thick + 2 * dx) / dx))          # wafer top surface
     box_at = box_at if box_at is not None else depth
+    z_extent = max(depth, box_at)
+    nx = max(8, int(round(domain_w / dx)))
+    nz = max(8, int(round((z_extent + mask_thick + 4 * dx) / dx)))
+    j0 = int(round((mask_thick + 2 * dx) / dx))          # wafer top surface
     j_box = min(nz - 1, j0 + int(round(box_at / dx))) if box else nz + 10
 
     phi = [0.0] * (nx * nz)
@@ -130,9 +147,10 @@ def simulate(openings: List[Tuple[float, float]], domain_w: float,
 
     lib = _load_lib()
     dt = 0.35 * dx
-    n_aniso = max(1, int(round(recipe.etch_per_cycle / (recipe.r_ion * dt))))
-    # isotropic burst sized to one scallop (~15% of the vertical advance)
-    n_iso = max(1, int(round(0.15 * recipe.etch_per_cycle
+    n_aniso = max(1, int(round(_RATE_CAL * recipe.etch_per_cycle
+                               / (recipe.r_ion * dt))))
+    # isotropic burst sized to one scallop (absolute lateral bulge per cycle)
+    n_iso = max(1, int(round(recipe.scallop_um
                              / (recipe.r_iso * dt + 1e-9))))
     vis_maxlen = (depth + mask_thick) * 1.2
 
@@ -142,7 +160,8 @@ def simulate(openings: List[Tuple[float, float]], domain_w: float,
         lib.bosch_run(arr, mk, nx, nz, dx, j_box,
                       recipe.r_ion, recipe.r_iso, recipe.selectivity,
                       recipe.footing, recipe.cycles, n_aniso, n_iso, dt,
-                      2, recipe.arde_angles, vis_maxlen)
+                      recipe.reinit_stride, recipe.arde_angles, vis_maxlen,
+                      recipe.passivation, recipe.bow, j0)
         phi = list(arr)
     else:
         phi = _py_fallback(phi, mask, nx, nz, dx, j_box, recipe,
@@ -180,10 +199,40 @@ def _measure(res: EtchResult, j0: int, mask_thick: float):
         res.depths.append(depth)
         res.widths.append(max(width, x1 - x0))
         res.reached_box.append(jdeep >= res.j_box - 1)
+        res.tapers.append(_taper(res, j0, ic, jdeep))
     # scallop and footing measured on the deepest (best-resolved) trench
     kd = max(range(len(res.depths)), key=lambda k: res.depths[k])
     res.scallop_um = _scallop(res, j0, kd)
     res.footing_um = _footing(res, j0, kd)
+
+
+def _row_width(res, ic, j):
+    """Void width of the trench containing column ic at row j (um)."""
+    nx, nz, dx, phi = res.nx, res.nz, res.dx, res.phi
+    if phi[ic + nx * j] <= 0:
+        return 0.0
+    li = ic
+    while li > 0 and phi[li - 1 + nx * j] > 0:
+        li -= 1
+    ri = ic
+    while ri < nx - 1 and phi[ri + 1 + nx * j] > 0:
+        ri += 1
+    return (ri - li + 1) * dx
+
+
+def _taper(res, j0, ic, jdeep):
+    """Sidewall taper angle from vertical (deg): + = narrowing downward
+    (positive taper), - = widening / re-entrant (negative taper / bowing)."""
+    if jdeep <= j0 + 5:
+        return 0.0
+    jt = j0 + max(2, int(0.15 * (jdeep - j0)))
+    jb = j0 + int(0.85 * (jdeep - j0))
+    wt = _row_width(res, ic, jt)
+    wb = _row_width(res, ic, jb)
+    if wt <= 0 or wb <= 0:
+        return 0.0
+    dz = (jb - jt) * res.dx
+    return math.degrees(math.atan(0.5 * (wt - wb) / dz))
 
 
 def _wall_trace(res, j0, k):
