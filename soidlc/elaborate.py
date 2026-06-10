@@ -577,7 +577,18 @@ class Elaborator:
         dev = self.process.device()
         t = (dev.thickness * 1e-6) if dev else 25e-6
         E = dev.E if dev else 169e9
-        if any(tag in comp.name for tag in
+        # prefer a stiffness the component derives itself (k.x / k): exact and
+        # general (works for crab-legs, decoupling frames, anything)
+        for it in comp.items:
+            if isinstance(it, A.Derive) and it.target in ("k.x", "k", "kx"):
+                try:
+                    v = self._eval(it.expr, local)
+                    if isinstance(v, Quantity) and v.dim == (0, 1, -2, 0):
+                        model["k_x"] = v
+                        break
+                except Exception:
+                    pass
+        if "k_x" not in model and any(tag in comp.name for tag in
                ("flexure", "suspension", "leg", "spring")):
             L = local.get("L")
             w = local.get("w")

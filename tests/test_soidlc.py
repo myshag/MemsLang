@@ -147,17 +147,32 @@ class TestConnectivity(unittest.TestCase):
         art = self._compile(src)
         self.assertTrue(any("no anchor" in e for e in art.errors), art.errors)
 
-    def test_split_net_is_detected(self):
+    def test_split_net_across_released_islands_is_detected(self):
+        # two separate *released* masses cannot be one silicon node
         src = """
         device split {
-          inst A = anchor(20 um, 20 um) at (0, 0);
-          inst B = anchor(20 um, 20 um) at (100 um, 0);  // not connected
+          inst A = plate(80 um, 80 um) at (0, 0);
+          inst B = plate(80 um, 80 um) at (400 um, 0);   // not connected
           net N = A | B;
         }
         """
         art = self._compile(src)
-        self.assertTrue(any("split across" in e for e in art.errors),
-                        art.errors)
+        self.assertTrue(any("split across" in e and "released" in e
+                            for e in art.errors), art.errors)
+
+    def test_metal_routed_anchored_islands_allowed(self):
+        # two separate *anchored* stators wired to one pad via METAL is legal
+        src = """
+        device routed {
+          inst A = anchor(20 um, 20 um) at (0, 0);
+          inst B = anchor(20 um, 20 um) at (100 um, 0);
+          net N = A | B;
+        }
+        """
+        art = self._compile(src)
+        self.assertFalse(any("split" in e for e in art.errors), art.errors)
+        self.assertTrue(any("METAL-routed" in l for l in art.report),
+                        art.report)
 
     def test_comb_fingers_not_shorted(self):
         # interdigitated fingers must remain on two distinct islands

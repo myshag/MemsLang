@@ -1,0 +1,87 @@
+// Two-mass DECOUPLED gyroscope (the architecture from Sharaf et al. 2010).
+//
+// An outer drive frame is suspended from the substrate by beams that are
+// compliant only in x (beams oriented along y).  An inner sense mass hangs
+// inside the frame on decoupling beams that are compliant only in y (beams
+// oriented along x).  Result:
+//   * drive mode (x): frame + inner mass translate together  -> large mass
+//   * sense mode (y): inner mass moves in y *inside* the frame -> inner mass
+// The two modes no longer share a suspension, so they can be matched and the
+// Coriolis transfer is decoupled -- exactly what the plain single-mass design
+// could not do (its x/y modes split by 20%).
+
+process soi5 {
+  stack {
+    layer METAL  { thickness = 0.5 um; material = Au }
+    layer DEVICE { thickness = 5 um;   material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;   material = SiO2 }
+    layer HANDLE { thickness = 400 um; material = Si }
+  }
+  rules {
+    release { hole_size = 6 um; hole_pitch = 40 um; max_solid_span = 60 um }
+  }
+}
+
+// outer drive frame + inner sense mass + both suspensions, drawn inline
+component decoupled_core(wd = 6 um, ws = 5 um, Ld = 160 um) {
+  mech port frame, inner, fixed;
+
+  geometry {
+    // --- drive frame: a square ring of four 40 um bars ---
+    beam(680 um, 40 um, dir = x) at (0,  320 um);   // top bar
+    beam(680 um, 40 um, dir = x) at (0, 0 - 320 um); // bottom bar
+    beam(680 um, 40 um, dir = y) at (0 - 320 um, 0); // left bar
+    beam(680 um, 40 um, dir = y) at (320 um, 0);     // right bar
+
+    // --- drive suspension: four y-beams (soft in x) to outer anchors ---
+    beam(Ld, wd, dir = y) at (0 - 180 um, 340 um + Ld/2);
+    anchor(30 um, 30 um)  at (0 - 180 um, 340 um + Ld + 15 um);
+    beam(Ld, wd, dir = y) at (180 um, 340 um + Ld/2);
+    anchor(30 um, 30 um)  at (180 um, 340 um + Ld + 15 um);
+    beam(Ld, wd, dir = y) at (0 - 180 um, 0 - 340 um - Ld/2);
+    anchor(30 um, 30 um)  at (0 - 180 um, 0 - 340 um - Ld - 15 um);
+    beam(Ld, wd, dir = y) at (180 um, 0 - 340 um - Ld/2);
+    anchor(30 um, 30 um)  at (180 um, 0 - 340 um - Ld - 15 um);
+
+    // --- inner sense mass ---
+    plate(360 um, 360 um) at (0, 0);
+
+    // --- decoupling suspension: four x-beams (soft in y) inner <-> frame,
+    //     sized so the sense mode lands on the drive mode (~16.8 kHz) ---
+    // length 130 spans inner edge (180) to frame inner face (300) with 5 um
+    // overlap on each side; free bending length stays ~120 um
+    beam(130 um, ws, dir = x) at (0 - 240 um,  120 um);
+    beam(130 um, ws, dir = x) at (0 - 240 um, 0 - 120 um);
+    beam(130 um, ws, dir = x) at (240 um,  120 um);
+    beam(130 um, ws, dir = x) at (240 um, 0 - 120 um);
+  }
+
+  // lumped drive stiffness (4 guided y-beams) -> drive-mode handle for solve
+  derive k.x = 4 * (process.DEVICE.E * process.DEVICE.thickness * wd^3) / Ld^3;
+}
+
+device gyroscope_2mass {
+  param f0_target = 16.8 kHz;
+  param V_drive   = 20 V;
+
+  // Ld (drive suspension) and ws (decoupling suspension) are tuned
+  // INDEPENDENTLY so the drive and sense modes land together (~16.5 kHz,
+  // < 2 % split) -- the whole point of decoupling: each mode has its own
+  // suspension, so matching one does not disturb the other.
+  inst C = decoupled_core(wd = 6 um, ws = 2 um, Ld = 285 um) at (0, 0);
+
+  // drive combs on +-x couple to the frame (which moves in x)
+  inst DL = combdrive(N = 50, g = 2 um, ov = 20 um, wf = 2 um, Lf = 40 um)
+            attach (rotor -> C.left);
+  inst DR = combdrive(N = 50, g = 2 um, ov = 20 um, wf = 2 um, Lf = 40 um)
+            attach (rotor -> C.right);
+
+  require f_res(C) >= 15 kHz;
+
+  net DRIVE = DL.stator | DR.stator;
+  net GND   = C | C.fixed;
+
+  isolate DRIVE from GND by trench;
+  constraint anchored(C.fixed, DL.stator, DR.stator);
+}

@@ -70,6 +70,32 @@ squeeze-film between hundreds of 2 µm-spaced fingers dominates the real device
 and our film model under-counts it. Vacuum Q (anchor/TED-limited) we do not
 model at all.
 
+## Two-mass decoupled version (`examples/gyroscope_2mass.soidl`)
+
+The 20 % split above is exactly what the paper's architecture removes. So we
+built the **decoupled two-mass** structure: an outer **drive frame**
+suspended from the substrate by beams compliant only in x, carrying an inner
+**sense mass** suspended *from the frame* by decoupling beams compliant only
+in y.
+
+![two-mass modes](gyro2_fem_island1_modes.png)
+
+The FEM confirms the decoupling:
+
+| Mode | Single-mass | Two-mass decoupled |
+|---|---|---|
+| Mode 1 | 16.79 kHz (drive, x) | **16.36 kHz — sense: inner mass moves in y, frame still** |
+| Mode 2 | 20.21 kHz (sense, x) | **16.52 kHz — drive: frame + inner move together in x** |
+| **Split** | **20.4 %** | **1.0 %** |
+
+Because the drive mode rides on the outer suspension (`Ld`) and the sense mode
+on the decoupling suspension (`ws`), the two can be tuned **independently** —
+lengthening `Ld` pulls the drive mode down onto the sense mode without
+touching the latter. That independent tunability is the architectural payoff,
+and it brings us from a 20 % split to ~1 %, approaching the paper's matched
+design (the residual gap to their 0.08 % is closed in the real device by
+electrostatic tuning combs, which we do not model).
+
 ## Reproduce
 
 ```bash
