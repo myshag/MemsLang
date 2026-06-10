@@ -186,6 +186,63 @@ static void vis_field(const double *phi, double *vis, int nx, int nz,
         }
 }
 
+/* --- anisotropic wet etch (KOH / TMAH) ----------------------------------
+ * Orientation-dependent etch: the rate depends on the angle of the surface
+ * normal to the crystal axes.  On a (100) wafer the slow {111} planes meet
+ * the surface at 54.74 deg, so the etch self-terminates into facetted pits /
+ * V-grooves bounded by {111}.  Same level-set core, different velocity --
+ * this is the bulk-micromachining sibling of the Bosch process.
+ */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+static void wet_velocity(const double *phi, const unsigned char *mask,
+                         double *V, int nx, int nz, double dx, double r100,
+                         double r111, double r110, double ang111,
+                         double notchw, double sel) {
+    double inv_dx = 1.0 / dx, band = 4.5 * dx, d2r = M_PI / 180.0;
+    #pragma omp parallel for schedule(static)
+    for (int j = 0; j < nz; j++)
+        for (int i = 0; i < nx; i++) {
+            int k = IDX(i, j);
+            V[k] = 0.0;
+            if (fabs(phi[k]) > band) continue;
+            int ip = i < nx - 1 ? i + 1 : i, im = i > 0 ? i - 1 : i;
+            int jp = j < nz - 1 ? j + 1 : j, jm = j > 0 ? j - 1 : j;
+            double gx = (phi[IDX(ip, j)] - phi[IDX(im, j)]) * 0.5 * inv_dx;
+            double gz = (phi[IDX(i, jp)] - phi[IDX(i, jm)]) * 0.5 * inv_dx;
+            double gn = sqrt(gx * gx + gz * gz) + 1e-12;
+            double nz_up = -gz / gn;                 /* 1 = flat {100} bottom */
+            if (nz_up > 1.0) nz_up = 1.0;
+            if (nz_up < -1.0) nz_up = -1.0;
+            double ang = acos(nz_up) / d2r;          /* deg from {100} normal */
+            double far = (ang < ang111) ? r100 : r110;
+            double t = (ang - ang111) / notchw;
+            double g = 1.0 - exp(-t * t);            /* notch at the {111} angle */
+            double rate = r111 + (far - r111) * g;
+            if (mask[k]) rate /= sel;
+            V[k] = rate;
+        }
+}
+
+void wet_run(double *phi, const unsigned char *mask, int nx, int nz,
+             double dx, double r100, double r111, double r110, double ang111,
+             double notchw, double sel, int nsteps, double dt,
+             int reinit_stride) {
+    int n = nx * nz;
+    double *V = malloc(sizeof(double) * n);
+    double *g = malloc(sizeof(double) * n);
+    double *tmp = malloc(sizeof(double) * n);
+    for (int s = 0; s < nsteps; s++) {
+        wet_velocity(phi, mask, V, nx, nz, dx, r100, r111, r110,
+                     ang111, notchw, sel);
+        advect(phi, V, g, nx, nz, dx, dt);
+        if ((s + 1) % reinit_stride == 0) reinit(phi, tmp, nx, nz, dx, 2);
+    }
+    reinit(phi, tmp, nx, nz, dx, 2);
+    free(V); free(g); free(tmp);
+}
+
 void bosch_run(double *phi, const unsigned char *mask, int nx, int nz,
                double dx, int j_box, double R_ion, double R_iso, double sel,
                double footing, int ncycles, int n_aniso, int n_iso,
