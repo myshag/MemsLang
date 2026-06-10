@@ -37,11 +37,17 @@ def compile_source(src: str, device: Optional[str] = None,
                    fem: bool = False, fem_h: float = 12.0) -> Artifacts:
     ast = parse(src)
     elab = Elaborator(ast)
-    result = elab.elaborate_device(device)
+
+    # design closure: solve free parameters against the spec, then do the
+    # final (loud) elaboration with the solved values
+    from . import closure
+    overrides = closure.run(elab, device)
+    result = elab.elaborate_device(device, overrides=overrides)
     mesh = build3d.build_mesh(result, elab.process, include_handle=include_handle)
 
     art = Artifacts(elab.process, result, mesh, elab.report, elab.warnings,
                     elab.errors, model=result.model)
+    closure.enforce_requires(elab, art, device)
 
     if out_prefix:
         os.makedirs(os.path.dirname(out_prefix) or ".", exist_ok=True)

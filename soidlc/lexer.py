@@ -18,7 +18,7 @@ KEYWORDS = {
     "stack", "layer", "masks", "mask", "rules", "release", "drie",
     "geometry", "repeat", "in", "at", "attach",
     "mech", "elec", "port", "param", "derive", "inst", "net",
-    "constraint", "isolate", "from", "by", "trench", "check",
+    "constraint", "isolate", "from", "by", "trench", "check", "require",
     "solve", "such", "that", "within", "warn", "report",
     "deposit", "etch", "through", "backside", "exposed", "where", "auto",
 }

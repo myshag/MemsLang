@@ -169,6 +169,12 @@ class Check:
 
 
 @dataclass
+class Require:
+    """A hard design requirement, enforced by the closure stage."""
+    expr: "Expr"
+
+
+@dataclass
 class Solve:
     target: str
     expr: "Expr"

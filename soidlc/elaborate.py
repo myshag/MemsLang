@@ -122,6 +122,9 @@ class Elaborator:
         self.report: List[str] = []
         self.warnings: List[str] = []
         self.errors: List[str] = []
+        self.observed_params: Dict[str, Quantity] = {}
+        self._overrides: Dict[str, object] = {}
+        self._quiet = False
         self._index()
 
     def _index(self) -> None:
@@ -266,6 +269,9 @@ class Elaborator:
         fname = node.func.id if isinstance(node.func, A.Name) else None
         args = [self._eval(a, env) for a in node.args]
         kwargs = {k: self._eval(v, env) for k, v in node.kwargs}
+        # metric functions injected by the design-closure stage
+        if fname and callable(env.get(fname)):
+            return env[fname](*args, **kwargs)
         if fname == "sqrt":
             return _qfunc(args[0], math.sqrt, half_dim=True)
         if fname in ("abs",):
@@ -278,15 +284,25 @@ class Elaborator:
         return Sym(f"{fname or '?'}(...)")
 
     # ---- top-level compile ---------------------------------------------
-    def elaborate_device(self, name: Optional[str] = None) -> InstanceResult:
+    def resolve_device_name(self, name: Optional[str] = None) -> str:
         if name is None:
             if not self.devices:
                 raise ElabError("no device to elaborate")
-            name = list(self.devices.keys())[-1]
+            return list(self.devices.keys())[-1]
         if name not in self.devices:
             raise ElabError(f"unknown device {name!r}")
-        dev = self.devices[name]
-        return self._elab_device(dev)
+        return name
+
+    def elaborate_device(self, name: Optional[str] = None,
+                         overrides: Optional[Dict[str, object]] = None,
+                         quiet: bool = False) -> InstanceResult:
+        dev = self.devices[self.resolve_device_name(name)]
+        self._overrides = dict(overrides or {})
+        self._quiet = quiet
+        try:
+            return self._elab_device(dev)
+        finally:
+            self._quiet = False
 
     def _elab_device(self, dev: A.Device) -> InstanceResult:
         env: Dict[str, object] = {}
@@ -318,11 +334,10 @@ class Elaborator:
                 self._record_derive(it, env)
             elif isinstance(it, A.Check):
                 self._record_check(it, env)
+            elif isinstance(it, A.Require):
+                pass            # enforced by the design-closure stage
             elif isinstance(it, A.Solve):
-                val = solve_targets.get(it.target)
-                if val is not None:
-                    self.report.append(
-                        f"solve  {it.target} = {val!r}  (target met approx.)")
+                pass            # solved by the design-closure stage
 
         bbox = G.bbox_of(all_shapes)
         model = self._extract_device_model(insts)
@@ -400,13 +415,15 @@ class Elaborator:
         if fname == "array":
             return self._elab_array(call, env, insts, solves, inst_name)
 
-        if fname and is_primitive(fname):
-            shapes = self._call_primitive(fname, call, env)
-            return InstanceResult(shapes, G.bbox_of(shapes), {})
-
+        # a user-defined component shadows a builtin primitive of the
+        # same name (e.g. a `combdrive` component wrapping the comb prim)
         if fname in self.components:
             return self._elab_component(self.components[fname], call, env,
                                         solves, inst_name)
+
+        if fname and is_primitive(fname):
+            shapes = self._call_primitive(fname, call, env)
+            return InstanceResult(shapes, G.bbox_of(shapes), {})
 
         # unknown call -> empty geometry (e.g. behavioural-only component)
         self.warnings.append(f"inst {inst_name}: unknown component {fname!r}")
@@ -468,8 +485,15 @@ class Elaborator:
         local: Dict[str, object] = {}
         pos = [self._eval(a, env) for a in call.args]
         named = {k: self._eval(v, env) for k, v in call.kwargs}
+        base = inst_name.split("[")[0]
         for i, p in enumerate(comp.params):
-            if p.name in named:
+            # a design-closure override beats even an explicit argument:
+            # the declared value is just the initial guess for the solver
+            ov = (self._overrides.get(f"{inst_name}.{p.name}")
+                  or self._overrides.get(f"{base}.{p.name}"))
+            if ov is not None:
+                val = ov
+            elif p.name in named:
                 val = named[p.name]
             elif i < len(pos):
                 val = pos[i]
@@ -481,6 +505,8 @@ class Elaborator:
                 # try a solved value for "<inst>.<param>"
                 sv = solves.get(f"{inst_name}.{p.name}")
                 val = sv if sv is not None else val.fallback
+            if isinstance(val, Quantity):
+                self.observed_params[f"{base}.{p.name}"] = val
             local[p.name] = val
 
         shapes: List[G.Shape] = []
@@ -513,12 +539,12 @@ class Elaborator:
 
     def _elab_geomcall(self, gc: A.GeomCall, env, ports) -> List[G.Shape]:
         fname = gc.call.func.id if isinstance(gc.call.func, A.Name) else None
-        if fname and is_primitive(fname):
-            local_shapes = self._call_primitive(fname, gc.call, env)
-        elif fname in self.components:
+        if fname in self.components:
             sub = self._elab_component(self.components[fname], gc.call, env,
                                        {}, fname)
             local_shapes = sub.shapes
+        elif fname and is_primitive(fname):
+            local_shapes = self._call_primitive(fname, gc.call, env)
         else:
             return []
         dx, dy = self._geom_placement(gc.placement, env, ports)
@@ -587,6 +613,8 @@ class Elaborator:
 
     # ---- connectivity extraction (geometry -> netlist, LVS-style) ------
     def _check_connectivity(self, dev: A.Device, all_shapes: List[G.Shape]):
+        if self._quiet:
+            return          # skipped during design-closure iterations
         devlay = self.process.ctx.device_layer
         shapes = [s for s in all_shapes if s.layer == devlay]
         if not shapes:
@@ -689,6 +717,8 @@ class Elaborator:
 
     # ---- derive / check reporting --------------------------------------
     def _record_derive(self, it: A.Derive, env, prefix: str = ""):
+        if self._quiet:
+            return
         tag = f"{prefix}." if prefix else ""
         try:
             v = self._eval(it.expr, env)
@@ -697,6 +727,8 @@ class Elaborator:
             self.report.append(f"derive {tag}{it.target} {it.op} <unresolved: {e}>")
 
     def _record_check(self, it: A.Check, env, prefix: str = ""):
+        if self._quiet:
+            return
         tag = f"{prefix}: " if prefix else ""
         try:
             v = self._eval(it.expr, env)

@@ -78,7 +78,13 @@ device comb_resonator {
   inst D1 = combdrive(N = 24) attach (rotor -> M.left);
   inst D2 = combdrive(N = 24) attach (rotor -> M.right);
 
-  solve S.L such that f_res(M, S) == f0_target within 2%;
+  // design closure: the declared L and N above are only initial guesses —
+  // the compiler solves them against the spec below
+  solve S.L  such that f_res(M, S) == f0_target within 1%;
+  solve D1.N such that stroke_max(V_drive) == 8 um within 5%;
+
+  require stroke_max(V_drive) >= 5 um;
+  require f_res(M, S) >= 15 kHz;
 
   net DRIVE = D1.stator;
   net SENSE = D2.stator;
@@ -88,5 +94,4 @@ device comb_resonator {
   constraint released(M, S);
   constraint anchored(D1.stator, D2.stator, S.fixed);
 
-  check stroke_max(V_drive) >= 5 um;
 }

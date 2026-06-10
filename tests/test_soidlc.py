@@ -172,6 +172,50 @@ class TestConnectivity(unittest.TestCase):
         self.assertNotEqual(rotor, stator)
 
 
+class TestClosure(unittest.TestCase):
+    """Design closure: solve targets are synthesised from the spec."""
+
+    def test_resonator_meets_spec(self):
+        with open(os.path.join(EX, "comb_resonator.soidl")) as f:
+            art = compile_source(f.read())
+        self.assertEqual(art.errors, [], art.errors)
+        # f0_target = 20 kHz, within 1%
+        f0 = art.model["f0"].value
+        self.assertLess(abs(f0 - 20e3) / 20e3, 0.015, f0)
+        solved = [l for l in art.report if l.startswith("closure: solved")]
+        self.assertEqual(len(solved), 2, art.report)
+        self.assertTrue(any("S.L" in l for l in solved))
+        self.assertTrue(any("D1.N" in l for l in solved))
+        ok = [l for l in art.report if l.startswith("require") and ": ok" in l]
+        self.assertEqual(len(ok), 2, art.report)
+
+    def test_violated_require_is_an_error(self):
+        src = """
+        component flex_suspension(L = 200 um, w = 4 um, n_beams = 1) {
+          derive k.x = n_beams * (process.DEVICE.E * process.DEVICE.thickness * w^3) / L^3;
+          geometry {
+            beam(L, w, dir = y) at (0, 2 um - L/2);
+            anchor(20 um, 20 um) at (0, 2 um - L - 8 um);
+          }
+        }
+        device d {
+          inst M = plate(100 um, 100 um) at (0, 0);
+          inst S = array(flex_suspension(L = 200 um), count = 4, place = corners(M));
+          net GND = M | S.fixed;
+          require f_res(M, S) >= 1 MHz;   // impossible for this geometry
+        }
+        """
+        art = compile_source(src)
+        self.assertTrue(any("require violated" in e for e in art.errors),
+                        art.errors)
+
+    def test_devices_without_solve_unaffected(self):
+        with open(os.path.join(EX, "accelerometer.soidl")) as f:
+            art = compile_source(f.read())
+        self.assertFalse([l for l in art.report if "closure" in l])
+        self.assertEqual(art.errors, [])
+
+
 class TestFEM(unittest.TestCase):
     """Validate the built-in plane-stress solver against beam theory."""
 

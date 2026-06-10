@@ -122,7 +122,38 @@ The pipeline mirrors the `soidlc` stages from the spec:
    the halved beams), which led to the outward-mirrored `corners()`
    placement semantics.
 
-10. **Model order reduction** (`reduce.py`, runs with `--fem`) — the FEM
+10. **Design closure** (`closure.py`, `metrics.py`) — the inverse-design
+    stage: dimensions are *outputs*, not inputs. Every
+    `solve <param> such that <equation> [within tol]` declares a free design
+    variable (its declared value is just the initial guess), and every
+    `require <inequality>` adds a hard constraint. The compiler
+    re-elaborates the device with candidate values (quiet mode: no reports,
+    no DRC), evaluates the spec through metric functions computed from the
+    fresh geometry (`f_res`, `stroke_max(V)`, `stroke_static(V)`,
+    `Q_estimate`, `area`), and minimises the total violation with
+    Nelder–Mead. The example resonator is *synthesised* from its spec:
+
+    ```
+    solve S.L  such that f_res(M, S) == f0_target within 1%;
+    solve D1.N such that stroke_max(V_drive) == 8 um within 5%;
+    require stroke_max(V_drive) >= 5 um;
+    require f_res(M, S) >= 15 kHz;
+    ```
+    ```
+    closure: solved S.L = 282.472 um  [f_res(M, S) == f0_target; residual -0.09%, ok]
+    closure: solved D1.N = 17.1955    [stroke_max(V_drive) == 8 um; residual -0.09%, ok]
+    closure: 48 design evaluations, total penalty 1.684e-06
+    require stroke_max(V_drive) >= 5 um: ok (actual: 7.9927 um)
+    ```
+
+    A violated `require` on the final geometry is a compile error, same as a
+    connectivity mismatch. The closed design then flows into FEM, which
+    independently verifies the synthesised geometry (mode 1 = 21.2 kHz for
+    the 20 kHz lumped target — the known lumped-vs-FEM bias an outer
+    iteration could absorb). The whole closure loop runs in ~1 s (each
+    design evaluation is a quiet re-elaboration, ~10 ms).
+
+11. **Model order reduction** (`reduce.py`, runs with `--fem`) — the FEM
     modes are projected into a behavioural model: each mode becomes one
     oscillator `q̈ + 2ζωq̇ + ω²q = φᵀf`, and comb transducers couple in
     through modal participation factors measured at their rotor backbones.
@@ -151,7 +182,7 @@ The pipeline mirrors the `soidlc` stages from the spec:
     reproduces the FEM mode-1 frequency to <0.01%, and the BVD series
     resonance matches by construction (both checked in tests).
 
-11. With an output prefix, `--fem` also writes deformation pictures: a
+12. With an output prefix, `--fem` also writes deformation pictures: a
     mode-shape panel (grey undeformed mesh + deformed mesh coloured by
     displacement magnitude) and an isometric render of the device deformed
     by mode 1 (exaggerated):

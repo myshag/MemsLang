@@ -215,6 +215,8 @@ class Parser:
             return self.parse_constraint()
         if self.at("KEYWORD", "check"):
             return self.parse_check()
+        if self.at("KEYWORD", "require"):
+            return self.parse_require()
         if self.at("KEYWORD", "solve"):
             return self.parse_solve()
         raise ParseError(
@@ -386,6 +388,12 @@ class Parser:
             mode = "report"
         self.accept("PUNCT", ";")
         return A.Check(expr, mode, tail)
+
+    def parse_require(self) -> A.Require:
+        self.eat("KEYWORD", "require")
+        expr = self.parse_expr()
+        self.accept("PUNCT", ";")
+        return A.Require(expr)
 
     def parse_solve(self) -> A.Solve:
         self.eat("KEYWORD", "solve")
