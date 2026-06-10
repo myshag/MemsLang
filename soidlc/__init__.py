@@ -43,10 +43,6 @@ def compile_source(src: str, device: Optional[str] = None,
     art = Artifacts(elab.process, result, mesh, elab.report, elab.warnings,
                     elab.errors, model=result.model)
 
-    if fem:
-        from . import fem2d
-        fem2d.analyze(elab, art, h=fem_h)
-
     if out_prefix:
         os.makedirs(os.path.dirname(out_prefix) or ".", exist_ok=True)
         stl = out_prefix + ".stl"
@@ -59,6 +55,10 @@ def compile_source(src: str, device: Optional[str] = None,
         render.render_mesh(mesh, build3d.layer_colors(elab.process), png)
         art.files = {"stl": stl, "obj": obj, "svg": svgf, "png": png,
                      "mtl": out_prefix + ".mtl"}
+
+    if fem:
+        from . import fem2d
+        fem2d.analyze(elab, art, h=fem_h, plot_prefix=out_prefix)
     return art
 
 

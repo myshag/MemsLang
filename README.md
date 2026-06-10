@@ -121,6 +121,19 @@ The pipeline mirrors the `soidlc` stages from the spec:
    length (FEM read 2.8× the lumped frequency — exactly the ×8 stiffness of
    the halved beams), which led to the outward-mirrored `corners()`
    placement semantics.
+
+   With an output prefix, `--fem` also writes deformation pictures: a
+   mode-shape panel (grey undeformed mesh + deformed mesh coloured by
+   displacement magnitude) and an isometric render of the device deformed
+   by mode 1 (exaggerated):
+
+   | mode shapes (comb resonator) |
+   | --- |
+   | ![mode shapes](docs/comb_resonator_fem_island1_modes.png) |
+
+   | deformed 3D, mode 1 (comb resonator / accelerometer) | |
+   | --- | --- |
+   | ![deformed](docs/comb_resonator_fem_island1_mode1_3d.png) | ![deformed accel](docs/accelerometer_fem_island1_mode1_3d.png) |
 10. **Export** (`exporters.py`, `svg.py`, `render.py`) — binary STL, OBJ+MTL
     (per-layer colours), SVG top view, and a z-buffered isometric PNG from a
     built-in software rasteriser.

@@ -228,6 +228,25 @@ class TestFEM(unittest.TestCase):
         pct = float(cmp[0].rsplit("(", 1)[1].rstrip("%)"))
         self.assertLess(abs(pct), 25.0, cmp[0])
 
+    def test_deformation_plots_written(self):
+        import struct
+        import tempfile
+        with open(os.path.join(EX, "accelerometer.soidl")) as f:
+            src = f.read()
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = os.path.join(tmp, "dev")
+            art = compile_source(src, out_prefix=prefix, fem=True,
+                                 fem_h=20.0)
+            for key in ("fem_modes_1", "fem_3d_1"):
+                path = art.files.get(key)
+                self.assertTrue(path and os.path.exists(path), key)
+                with open(path, "rb") as fh:
+                    self.assertEqual(fh.read(8), b"\x89PNG\r\n\x1a\n")
+                    fh.read(8)
+                    w, h = struct.unpack(">II", fh.read(8))
+                self.assertGreater(w, 100)
+                self.assertGreater(h, 100)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -387,12 +387,16 @@ def _m_orth(v: List[float], found, Mdiag) -> None:
 
 
 def modal(mesh: Mesh2D, E: float, nu: float, rho: float, t: float,
-          n_modes: int = 3, max_iter: int = 100, tol: float = 1e-10
-          ) -> List[float]:
-    """Lowest natural frequencies (Hz) by inverse iteration + deflation."""
+          n_modes: int = 3, max_iter: int = 100, tol: float = 1e-10,
+          return_vectors: bool = False):
+    """Lowest natural frequencies (Hz) by inverse iteration + deflation.
+
+    With ``return_vectors=True`` returns ``(freqs, vectors, dof_of)`` where
+    each vector is the M-normalised mode shape over the free dofs.
+    """
     rows, band, Mdiag, dof_of, ndof = _assemble(mesh, E, nu, rho, t)
     if ndof == 0:
-        return []
+        return ([], [], dof_of) if return_vectors else []
     _chol_banded(rows)
     found: List[List[float]] = []
     freqs: List[float] = []
@@ -419,12 +423,16 @@ def modal(mesh: Mesh2D, E: float, nu: float, rho: float, t: float,
             lam_prev = lam
         found.append(x)
         freqs.append(math.sqrt(max(lam, 0.0)) / (2.0 * math.pi))
+    if return_vectors:
+        return freqs, found, dof_of
     return freqs
 
 
-def analyze(elab, art, h: float = 12.0) -> None:
+def analyze(elab, art, h: float = 12.0,
+             plot_prefix: Optional[str] = None) -> None:
     """Pipeline hook: modal FEM for every suspended island; appends to the
-    report and compares mode 1 against the lumped f0 estimate."""
+    report, compares mode 1 against the lumped f0 estimate, and (with a
+    ``plot_prefix``) writes mode-shape panels and a deformed 3D render."""
     dev = elab.process.device()
     if dev is None:
         return
@@ -443,17 +451,33 @@ def analyze(elab, art, h: float = 12.0) -> None:
                 f"fem: island #{cid} has {len(mesh.elems)} elements "
                 f"(> {MAX_ELEMENTS}); increase --fem-h")
             continue
-        freqs = modal(mesh, E, nu, rho, t, n_modes=3)
+        freqs, vecs, dof_of = modal(mesh, E, nu, rho, t, n_modes=3,
+                                    return_vectors=True)
         art.report.append(
             f"fem    island #{cid}: {len(mesh.elems)} elements, "
             f"{mesh.n_free_dof} free dof (h = {h:g} um)")
-        if freqs:
+        if not freqs:
+            continue
+        art.report.append(
+            "fem    island #%d modes: %s" % (
+                cid, ", ".join(f"{f / 1e3:.2f} kHz" for f in freqs)))
+        f0 = art.model.get("f0")
+        if f0 is not None:
+            d = (freqs[0] - f0.value) / f0.value * 100.0
             art.report.append(
-                "fem    island #%d modes: %s" % (
-                    cid, ", ".join(f"{f / 1e3:.2f} kHz" for f in freqs)))
-            f0 = art.model.get("f0")
-            if f0 is not None:
-                d = (freqs[0] - f0.value) / f0.value * 100.0
-                art.report.append(
-                    f"fem    mode 1 vs lumped f0: {freqs[0] / 1e3:.2f} kHz "
-                    f"vs {f0.value / 1e3:.2f} kHz ({d:+.1f}%)")
+                f"fem    mode 1 vs lumped f0: {freqs[0] / 1e3:.2f} kHz "
+                f"vs {f0.value / 1e3:.2f} kHz ({d:+.1f}%)")
+        if plot_prefix:
+            from . import femplot
+            modes_png = f"{plot_prefix}_fem_island{cid}_modes.png"
+            femplot.plot_modes(mesh, freqs, vecs, dof_of, modes_png)
+            art.files[f"fem_modes_{cid}"] = modes_png
+            island_ids = {id(s) for s in ss}
+            others = [s for s in art.result.shapes
+                      if id(s) not in island_ids]
+            d3_png = f"{plot_prefix}_fem_island{cid}_mode1_3d.png"
+            femplot.render_deformed_3d(ss, others, elab.process, mesh,
+                                       vecs[0], dof_of, d3_png)
+            art.files[f"fem_3d_{cid}"] = d3_png
+            art.report.append(
+                f"fem    island #{cid} plots: {modes_png}, {d3_png}")
