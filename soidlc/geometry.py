@@ -50,6 +50,11 @@ class Polygon:
 
     def rotated(self, deg: float) -> "Polygon":
         c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+        # exact trig for multiples of 90 deg keeps rectilinear geometry exact
+        if abs(c - round(c)) < 1e-12:
+            c = float(round(c))
+        if abs(s - round(s)) < 1e-12:
+            s = float(round(s))
 
         def rot(r: Ring) -> Ring:
             return [(x * c - y * s, x * s + y * c) for x, y in r]
@@ -93,6 +98,7 @@ class Shape:
     polygon: Polygon
     label: str = ""
     mech: str = "released"   # "anchored" | "released" — drives release analysis
+    owner: str = ""          # device-level instance this shape belongs to
 
 
 def bbox_of(shapes: List[Shape]) -> Tuple[float, float, float, float]:

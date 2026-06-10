@@ -12,6 +12,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from . import connectivity
 from . import geometry as G
 from . import sast as A
 from .primitives import PRIMITIVES, PrimitiveCtx, is_primitive
@@ -117,6 +118,7 @@ class Elaborator:
         self.process = _default_process()
         self.report: List[str] = []
         self.warnings: List[str] = []
+        self.errors: List[str] = []
         self._index()
 
     def _index(self) -> None:
@@ -293,6 +295,9 @@ class Elaborator:
         for it in dev.items:
             if isinstance(it, A.Inst):
                 res = self._elab_inst(it, env, insts, solve_targets)
+                for sh in res.shapes:
+                    if not sh.owner:
+                        sh.owner = it.name
                 insts[it.name] = res
                 all_shapes.extend(res.shapes)
             elif isinstance(it, A.Derive):
@@ -307,6 +312,7 @@ class Elaborator:
 
         bbox = G.bbox_of(all_shapes)
         model = self._extract_device_model(insts)
+        self._check_connectivity(dev, all_shapes)
         return InstanceResult(all_shapes, bbox, {}, model)
 
     def _plan_solves(self, dev: A.Device, env) -> Dict[str, Quantity]:
@@ -322,10 +328,56 @@ class Elaborator:
     # ---- instance elaboration ------------------------------------------
     def _elab_inst(self, inst: A.Inst, env, insts, solves) -> InstanceResult:
         res = self._elab_call(inst.call, env, insts, solves, inst.name)
+        if inst.attach:
+            return self._apply_attach(res, inst.attach, insts)
         dx, dy = self._resolve_placement(inst, env, insts, res)
         if dx or dy:
             res = _translate_result(res, dx, dy)
         return res
+
+    def _apply_attach(self, res: InstanceResult, attach, insts
+                      ) -> InstanceResult:
+        """Place an instance against a side of another instance.
+
+        ``attach (rotor -> M.left)`` puts the instance just outside M's left
+        edge, rotated so its ``rotor``-labelled geometry faces (and slightly
+        overlaps) M — making the mechanical joint also an electrical one.
+        """
+        for port, target in attach:
+            info = self._attach_side(target, insts)
+            if info is None:
+                continue
+            pt, side = info
+            if side not in _SIDE_VEC:
+                cx, cy = _center(res.bbox)
+                return _translate_result(res, pt[0] - cx, pt[1] - cy)
+            sx, sy = _SIDE_VEC[side]
+            desired = (-sx, -sy)              # port must face the target
+            k = _rot_steps(_port_dir(res, port), desired)
+            if k:
+                res = _rotate_result(res, k)
+            x0, y0, x1, y1 = res.bbox
+            cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+            ov = 2.0                          # um of electrical overlap
+            if side == "left":
+                dx, dy = pt[0] + ov - x1, pt[1] - cy
+            elif side == "right":
+                dx, dy = pt[0] - ov - x0, pt[1] - cy
+            elif side == "bottom":
+                dx, dy = pt[0] - cx, pt[1] + ov - y1
+            else:                             # top
+                dx, dy = pt[0] - cx, pt[1] - ov - y0
+            return _translate_result(res, dx, dy)
+        return res
+
+    def _attach_side(self, target, insts):
+        if isinstance(target, A.Member) and isinstance(target.obj, A.Name):
+            iname, side = target.obj.id, target.attr
+            if iname in insts:
+                return _bbox_anchor(insts[iname].bbox, side), side
+        if isinstance(target, A.Name) and target.id in insts:
+            return _center(insts[target.id].bbox), "center"
+        return None
 
     def _elab_call(self, call: A.Call, env, insts, solves,
                    inst_name: str) -> InstanceResult:
@@ -450,7 +502,8 @@ class Elaborator:
         else:
             return []
         dx, dy = self._geom_placement(gc.placement, env, ports)
-        return [G.Shape(s.layer, s.polygon.translated(dx, dy), s.label, s.mech)
+        return [G.Shape(s.layer, s.polygon.translated(dx, dy), s.label, s.mech,
+                        s.owner)
                 for s in local_shapes]
 
     def _geom_placement(self, pl: Optional[A.Placement], env, ports
@@ -470,25 +523,7 @@ class Elaborator:
             if inst.placement.kind == "at_xy":
                 return (_as_um(self._eval(inst.placement.x, env)),
                         _as_um(self._eval(inst.placement.y, env)))
-        if inst.attach:
-            # translate so the instance centre lands on the first target point
-            for _port, target in inst.attach:
-                pt = self._resolve_target_point(target, insts)
-                if pt is not None:
-                    cx, cy = _center(res.bbox)
-                    return (pt[0] - cx, pt[1] - cy)
         return 0.0, 0.0
-
-    def _resolve_target_point(self, target, insts) -> Optional[Tuple[float, float]]:
-        # target like M.left / M.right / M.top / M.bottom / M.center
-        if isinstance(target, A.Member) and isinstance(target.obj, A.Name):
-            iname = target.obj.id
-            side = target.attr
-            if iname in insts:
-                return _bbox_anchor(insts[iname].bbox, side)
-        if isinstance(target, A.Name) and target.id in insts:
-            return _center(insts[target.id].bbox)
-        return None
 
     # ---- model extraction (lumped) -------------------------------------
     def _extract_component_model(self, comp, local, shapes) -> Dict[str, object]:
@@ -529,6 +564,107 @@ class Elaborator:
             model["f0"] = Quantity(f0, (0, 0, -1, 0))
         return model
 
+    # ---- connectivity extraction (geometry -> netlist, LVS-style) ------
+    def _check_connectivity(self, dev: A.Device, all_shapes: List[G.Shape]):
+        devlay = self.process.ctx.device_layer
+        shapes = [s for s in all_shapes if s.layer == devlay]
+        if not shapes:
+            return
+        comp = connectivity.components([s.polygon for s in shapes])
+        comp_of = {id(s): c for s, c in zip(shapes, comp)}
+        islands: Dict[int, List[G.Shape]] = {}
+        for s, c in zip(shapes, comp):
+            islands.setdefault(c, []).append(s)
+        self.report.append(
+            f"connectivity: {len(shapes)} DEVICE polygons -> "
+            f"{len(islands)} electrical island(s)")
+
+        # a fully released island has nothing holding it: it would detach
+        for c, ss in sorted(islands.items()):
+            if not any(s.mech == "anchored" for s in ss):
+                x0, y0, x1, y1 = G.bbox_of(ss)
+                owners = sorted({s.owner for s in ss if s.owner})
+                self.errors.append(
+                    f"island #{c} ({', '.join(owners) or 'unnamed'}) has no "
+                    f"anchor — released geometry would float away "
+                    f"(bbox [{x0:.0f},{y0:.0f}]..[{x1:.0f},{y1:.0f}] um)")
+
+        # declared nets must each map onto exactly one island
+        net_comps: Dict[str, set] = {}
+        for it in dev.items:
+            if not isinstance(it, A.Net):
+                continue
+            comps: set = set()
+            for iname, port in _net_refs(it.expr):
+                ss = self._shapes_for_ref(shapes, iname, port)
+                if not ss:
+                    self.warnings.append(
+                        f"net {it.name}: no DEVICE geometry for "
+                        f"{iname}{'.' + port if port else ''}")
+                    continue
+                comps |= {comp_of[id(s)] for s in ss}
+            net_comps[it.name] = comps
+            if len(comps) > 1:
+                self.errors.append(
+                    f"net {it.name} is split across {len(comps)} disconnected "
+                    f"islands ({sorted(comps)}) — geometry does not realise "
+                    f"the declared node")
+            elif comps:
+                self.report.append(
+                    f"net    {it.name} -> island #{min(comps)}")
+
+        # two different nets sharing an island is a short
+        names = [n for n in net_comps if net_comps[n]]
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                shared = net_comps[names[i]] & net_comps[names[j]]
+                if shared:
+                    self.errors.append(
+                        f"nets {names[i]} and {names[j]} are shorted: both "
+                        f"lie on island #{min(shared)}")
+
+        # explicit isolation requirements
+        for it in dev.items:
+            if not isinstance(it, A.Isolate):
+                continue
+            ca = self._netexpr_comps(it.a, net_comps, shapes, comp_of)
+            cb = self._netexpr_comps(it.b, net_comps, shapes, comp_of)
+            if not ca or not cb:
+                continue
+            da, db = _net_desc(it.a), _net_desc(it.b)
+            if ca & cb:
+                self.errors.append(
+                    f"isolate violated: {da} and {db} share island "
+                    f"#{min(ca & cb)} (trench does not separate them)")
+            else:
+                self.report.append(f"isolate {da} from {db}: ok")
+
+    def _shapes_for_ref(self, shapes: List[G.Shape], iname: str,
+                        port: Optional[str]) -> List[G.Shape]:
+        own = [s for s in shapes
+               if s.owner == iname or s.owner.startswith(iname + "[")]
+        if port:
+            labelled = [s for s in own if port in s.label]
+            if labelled:
+                return labelled
+            # ports named like an anchor map to the anchored geometry
+            anchored = [s for s in own if s.mech == "anchored"]
+            if anchored and port in ("fixed", "anchor", "anchors", "base"):
+                return anchored
+        return own
+
+    def _netexpr_comps(self, expr, net_comps, shapes, comp_of) -> set:
+        if isinstance(expr, A.Name) and expr.id in net_comps:
+            return net_comps[expr.id]
+        comps: set = set()
+        for iname, port in _net_refs(expr):
+            if iname in net_comps and port is None:
+                comps |= net_comps[iname]
+                continue
+            for s in self._shapes_for_ref(shapes, iname, port):
+                comps.add(comp_of[id(s)])
+        return comps
+
     # ---- derive / check reporting --------------------------------------
     def _record_derive(self, it: A.Derive, env, prefix: str = ""):
         tag = f"{prefix}." if prefix else ""
@@ -554,13 +690,68 @@ class Elaborator:
 
 
 # ---------------------------------------------------------------------------
+_SIDE_VEC = {"left": (-1, 0), "right": (1, 0), "top": (0, 1), "bottom": (0, -1)}
+
+
 def _translate_result(res: InstanceResult, dx: float, dy: float) -> InstanceResult:
-    shapes = [G.Shape(s.layer, s.polygon.translated(dx, dy), s.label, s.mech)
+    shapes = [G.Shape(s.layer, s.polygon.translated(dx, dy), s.label, s.mech,
+                      s.owner)
               for s in res.shapes]
     x0, y0, x1, y1 = res.bbox
     bbox = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
     ports = {k: (x + dx, y + dy) for k, (x, y) in res.ports.items()}
     return InstanceResult(shapes, bbox, ports, res.model)
+
+
+def _rotate_result(res: InstanceResult, k90: int) -> InstanceResult:
+    deg = 90.0 * (k90 % 4)
+    shapes = [G.Shape(s.layer, s.polygon.rotated(deg), s.label, s.mech,
+                      s.owner)
+              for s in res.shapes]
+    c, s_ = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    ports = {k: (x * c - y * s_, x * s_ + y * c)
+             for k, (x, y) in res.ports.items()}
+    return InstanceResult(shapes, G.bbox_of(shapes), ports, res.model)
+
+
+def _port_dir(res: InstanceResult, port: str) -> Tuple[int, int]:
+    """Which side of the instance the named port's geometry sits on."""
+    tagged = [s for s in res.shapes if port in s.label]
+    if not tagged:
+        return (1, 0)
+    px, py = _center(G.bbox_of(tagged))
+    cx, cy = _center(res.bbox)
+    dx, dy = px - cx, py - cy
+    if abs(dx) >= abs(dy):
+        return (1, 0) if dx >= 0 else (-1, 0)
+    return (0, 1) if dy >= 0 else (0, -1)
+
+
+def _rot_steps(d0: Tuple[int, int], d1: Tuple[int, int]) -> int:
+    def ang(d):
+        return {(1, 0): 0, (0, 1): 1, (-1, 0): 2, (0, -1): 3}[d]
+    return (ang(d1) - ang(d0)) % 4
+
+
+def _net_refs(expr) -> List[Tuple[str, Optional[str]]]:
+    """Flatten a net expression into (instance, port|None) references."""
+    if isinstance(expr, A.Binary) and expr.op == "|":
+        return _net_refs(expr.left) + _net_refs(expr.right)
+    if isinstance(expr, A.Member) and isinstance(expr.obj, A.Name):
+        return [(expr.obj.id, expr.attr)]
+    if isinstance(expr, A.Name):
+        return [(expr.id, None)]
+    return []
+
+
+def _net_desc(expr) -> str:
+    if isinstance(expr, A.Binary) and expr.op == "|":
+        return f"{_net_desc(expr.left)}|{_net_desc(expr.right)}"
+    if isinstance(expr, A.Member) and isinstance(expr.obj, A.Name):
+        return f"{expr.obj.id}.{expr.attr}"
+    if isinstance(expr, A.Name):
+        return expr.id
+    return "?"
 
 
 def _center(bbox) -> Tuple[float, float]:

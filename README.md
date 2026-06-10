@@ -69,19 +69,34 @@ The pipeline mirrors the `soidlc` stages from the spec:
 4. **Geometry synthesis** (`primitives.py`) — `beam`, `plate` (with
    auto-generated release holes from the process `release` rules), `comb`/
    `combdrive`, `anchor`, `gap_stop`, `via_metal` (METAL), `trench`.
-5. **Mechanical status from the stack** — each DEVICE polygon is `anchored`
+5. **Connectivity extraction** (`connectivity.py`) — in SOI the structural
+   layer is conductive, so electrical nodes are exactly the connected
+   components of the DEVICE polygons. The compiler computes them (union-find
+   over polygon overlap/abutment) and verifies the declared netlist against
+   geometric reality, the MEMS analogue of LVS:
+   - a `net` split across disconnected islands → **error**;
+   - two different `net`s on one island → **short, error**;
+   - `isolate A from B by trench` sharing an island → **error**;
+   - an island with no anchored geometry → **error** (a fully released
+     island has nothing holding it and would detach during release).
+   Violations are printed as `soidlc: ERROR:` and the exit code is 2
+   (artifacts are still written to aid debugging). The check is real: while
+   wiring it up it caught two genuine bugs in this repo — comb rotor finger
+   tips abutting the stator backbone (zero tip gap = short) and flexure
+   anchors placed 6 um short of their beams (floating islands).
+6. **Mechanical status from the stack** — each DEVICE polygon is `anchored`
    (BOX kept beneath, tied to the handle) or `released` (floating above the
    BOX gap). This drives the 3D build, not an annotation.
-6. **2.5D extrusion** (`mesh.py`, `build3d.py`) — the process `stack`
+7. **2.5D extrusion** (`mesh.py`, `build3d.py`) — the process `stack`
    assigns each layer a z-range; polygons are extruded into prisms. Anchored
    silicon gets a BOX pillar; a HANDLE slab spans the footprint. Rectilinear
    shapes use a shared-grid voxel-surface mesher → **watertight,
    T-junction-free** geometry (verified in tests).
-7. **Model extraction** — a lumped model is assembled from the geometry:
+8. **Model extraction** — a lumped model is assembled from the geometry:
    suspended mass `m` from released DEVICE area × thickness × ρ, stiffness
    `k` from folded-flexure `derive`s, and the resonant frequency
    `f0 = √(k/m)/2π`.
-8. **Export** (`exporters.py`, `svg.py`, `render.py`) — binary STL, OBJ+MTL
+9. **Export** (`exporters.py`, `svg.py`, `render.py`) — binary STL, OBJ+MTL
    (per-layer colours), SVG top view, and a z-buffered isometric PNG from a
    built-in software rasteriser.
 
@@ -89,12 +104,15 @@ The pipeline mirrors the `soidlc` stages from the spec:
 
 Implemented: `process { stack / masks / rules }`, `component(params) { port,
 derive, geometry, check }`, `device { inst, net, isolate, constraint, check,
-solve }`; `repeat` loops, `array`, placement/attachment, unit-checked
-expressions, primitives listed above.
+solve }`; `repeat` loops, `array`, placement/attachment (with automatic
+orientation: `attach (rotor -> M.top)` rotates the comb so the rotor faces
+the plate), unit-checked expressions, primitives listed above, and full
+connectivity extraction with `net`/`isolate` verification.
 
 Best-effort / partial: `solve` (a numeric fallback length is used unless a
-closed-form is known); `net`/`isolate`/`constraint` are parsed and reported
-but full connectivity extraction and DRC are not yet enforced. Behavioural
+closed-form is known); `constraint` calls are reported but not enforced
+(island anchoring is checked independently); DRC rules beyond release-hole
+generation are not yet enforced. Behavioural
 exports (Verilog-A / SPICE) and FEM hand-off are out of scope for this v0.1,
 which targets the 3D-model deliverable. Unknown functions inside
 `derive`/`check` degrade gracefully to a symbolic report entry rather than
@@ -110,6 +128,7 @@ soidlc/
   sast.py        AST node definitions
   primitives.py  primitive -> 2D polygon generators
   elaborate.py   hierarchy expansion, placement, model extraction
+  connectivity.py electrical island extraction + net/isolate verification
   geometry.py    2D polygon kernel
   mesh.py        triangulation + 2.5D extrusion (watertight grid mesher)
   build3d.py     stack-aware mesh assembly (anchors/box/handle)

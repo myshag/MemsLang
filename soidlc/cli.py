@@ -52,7 +52,11 @@ def main(argv=None) -> int:
             print("report  :")
             for line in art.report:
                 print(f"          {line}")
-    return 0
+    # connectivity / netlist violations are compile errors (printed even in
+    # quiet mode); artifacts are still written to aid debugging
+    for e in art.errors:
+        print(f"soidlc: ERROR: {e}", file=sys.stderr)
+    return 2 if art.errors else 0
 
 
 if __name__ == "__main__":

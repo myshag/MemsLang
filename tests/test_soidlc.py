@@ -104,5 +104,73 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(sum(1 for v in edges.values() if v != 2), 0)
 
 
+class TestConnectivity(unittest.TestCase):
+    def _compile(self, src):
+        return compile_source(src)
+
+    def test_examples_have_no_errors(self):
+        for name in ("comb_resonator.soidl", "accelerometer.soidl"):
+            with open(os.path.join(EX, name)) as f:
+                art = compile_source(f.read())
+            self.assertEqual(art.errors, [], f"{name}: {art.errors}")
+
+    def test_nets_map_to_distinct_islands(self):
+        with open(os.path.join(EX, "comb_resonator.soidl")) as f:
+            art = compile_source(f.read())
+        nets = [l for l in art.report if l.startswith("net    ")]
+        islands = {l.rsplit("#", 1)[1] for l in nets}
+        self.assertEqual(len(nets), 3)
+        self.assertEqual(len(islands), 3)   # DRIVE, SENSE, GND all distinct
+        self.assertTrue(any("isolate" in l and "ok" in l for l in art.report))
+
+    def test_short_is_detected(self):
+        src = """
+        device bad {
+          inst A = anchor(20 um, 20 um) at (0, 0);
+          inst B = anchor(20 um, 20 um) at (10 um, 0);   // overlaps A
+          net N1 = A;
+          net N2 = B;
+          isolate N1 from N2 by trench;
+        }
+        """
+        art = self._compile(src)
+        self.assertTrue(any("shorted" in e for e in art.errors), art.errors)
+        self.assertTrue(any("isolate violated" in e for e in art.errors))
+
+    def test_floating_island_is_detected(self):
+        src = """
+        device floaty {
+          inst M = plate(100 um, 100 um);
+          net X = M;
+        }
+        """
+        art = self._compile(src)
+        self.assertTrue(any("no anchor" in e for e in art.errors), art.errors)
+
+    def test_split_net_is_detected(self):
+        src = """
+        device split {
+          inst A = anchor(20 um, 20 um) at (0, 0);
+          inst B = anchor(20 um, 20 um) at (100 um, 0);  // not connected
+          net N = A | B;
+        }
+        """
+        art = self._compile(src)
+        self.assertTrue(any("split across" in e for e in art.errors),
+                        art.errors)
+
+    def test_comb_fingers_not_shorted(self):
+        # interdigitated fingers must remain on two distinct islands
+        from soidlc.primitives import prim_comb, PrimitiveCtx
+        from soidlc import connectivity
+        shapes = prim_comb([], {}, PrimitiveCtx())
+        comp = connectivity.components([s.polygon for s in shapes])
+        rotor = {c for s, c in zip(shapes, comp) if "rotor" in s.label}
+        stator = {c for s, c in zip(shapes, comp) if "stator" in s.label}
+        self.assertEqual(len(rotor), 1)
+        self.assertEqual(len(stator), 1)
+        self.assertNotEqual(rotor, stator)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

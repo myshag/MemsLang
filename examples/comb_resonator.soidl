@@ -40,9 +40,10 @@ component folded_flexure(L = 200 um, w = 4 um, n_folds = 2) {
     repeat i in 0..n_folds-1 {
       beam(L, w, dir = y) at (i * (2*w + 8 um), 0);
     }
-    // truss connecting the folds at the top
-    beam(2 * n_folds * w + 16 um, w, dir = x) at (n_folds*w, L/2);
-    anchor(20 um, 20 um) at (0, 0 - L/2 - 16 um);
+    // truss connecting the folds at the top (exactly spans the beams)
+    beam((n_folds - 1) * (2*w + 8 um) + w, w, dir = x)
+        at ((n_folds - 1) * (w + 4 um), L/2);
+    anchor(20 um, 20 um) at (0, 0 - L/2 - 8 um);
   }
 
   check w >= 2 um;
@@ -68,8 +69,9 @@ device comb_resonator {
   inst M  = plate(300 um, 300 um) at (0, 0);
   inst S  = array(folded_flexure(L = 220 um, w = 4 um), count = 4,
                   place = corners(M));
-  inst D1 = combdrive(N = 24) attach (rotor -> M.left);
-  inst D2 = combdrive(N = 24) attach (rotor -> M.right);
+  // combs on the top/bottom edges, clear of the corner flexures
+  inst D1 = combdrive(N = 24) attach (rotor -> M.bottom);
+  inst D2 = combdrive(N = 24) attach (rotor -> M.top);
 
   solve S.L such that f_res(M, S) == f0_target within 2%;
 

@@ -113,10 +113,12 @@ def prim_comb(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
     pitch = wf + g            # one rotor + gap
     span = N * (2 * (wf + g))
     bar = 8.0                 # backbone bar width (um)
+    # finger tips must not reach the opposing backbone: leave a tip gap = g
+    D = Lf + g                # distance between the two backbone inner faces
 
     # rotor backbone (released) on the left, stator backbone (anchored) right
-    rotor_x = -Lf / 2 - bar / 2
-    stator_x = Lf / 2 + bar / 2
+    rotor_x = -D / 2 - bar / 2
+    stator_x = D / 2 + bar / 2
     shapes.append(G.Shape(ctx.device_layer,
                           G.rect(bar, span, rotor_x, 0), "comb_rotor_bar",
                           mech="released"))
@@ -127,11 +129,11 @@ def prim_comb(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
     y = -span / 2 + pitch / 2
     for i in range(N):
         # rotor finger reaches right from the rotor bar
-        rf = G.rect(Lf, wf, rotor_x + bar / 2 + Lf / 2, y)
+        rf = G.rect(Lf, wf, -D / 2 + Lf / 2, y)
         shapes.append(G.Shape(ctx.device_layer, rf, "rotor_finger",
                               mech="released"))
         # stator finger reaches left, offset by half a pitch
-        sf = G.rect(Lf, wf, stator_x - bar / 2 - Lf / 2, y + (wf + g))
+        sf = G.rect(Lf, wf, D / 2 - Lf / 2, y + (wf + g))
         shapes.append(G.Shape(ctx.device_layer, sf, "stator_finger",
                               mech="anchored"))
         y += 2 * (wf + g)

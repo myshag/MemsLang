@@ -26,6 +26,7 @@ class Artifacts:
     mesh: object
     report: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
     files: Dict[str, str] = field(default_factory=dict)
     model: Dict[str, object] = field(default_factory=dict)
 
@@ -39,7 +40,7 @@ def compile_source(src: str, device: Optional[str] = None,
     mesh = build3d.build_mesh(result, elab.process, include_handle=include_handle)
 
     art = Artifacts(elab.process, result, mesh, elab.report, elab.warnings,
-                    model=result.model)
+                    elab.errors, model=result.model)
 
     if out_prefix:
         os.makedirs(os.path.dirname(out_prefix) or ".", exist_ok=True)

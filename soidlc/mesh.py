@@ -237,12 +237,20 @@ def extrude_polygon(poly: G.Polygon, z0: float, z1: float,
     return _extrude_general(poly, z0, z1, group)
 
 
+def _dedupe(vals, tol=1e-6):
+    out = []
+    for v in sorted(vals):
+        if not out or v - out[-1] > tol:
+            out.append(v)
+    return out
+
+
 def _extrude_grid(poly: G.Polygon, z0: float, z1: float, group: str) -> Mesh:
     mesh = Mesh()
-    xs = sorted({p[0] for p in poly.exterior}
-                | {p[0] for h in poly.holes for p in h})
-    ys = sorted({p[1] for p in poly.exterior}
-                | {p[1] for h in poly.holes for p in h})
+    xs = _dedupe({p[0] for p in poly.exterior}
+                 | {p[0] for h in poly.holes for p in h})
+    ys = _dedupe({p[1] for p in poly.exterior}
+                 | {p[1] for h in poly.holes for p in h})
     nx, ny = len(xs) - 1, len(ys) - 1
     if nx < 1 or ny < 1:
         return mesh

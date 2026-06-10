@@ -18,7 +18,7 @@ component suspension(L = 300 um, w = 5 um) {
   derive k = process.DEVICE.E * process.DEVICE.thickness * w^3 / L^3;
   geometry {
     beam(L, w, dir = x) at (0, 0);
-    anchor(24 um, 24 um) at (0 - L/2 - 12 um, 0);
+    anchor(24 um, 24 um) at (0 - L/2 - 10 um, 0);  // 2 um overlap with beam
   }
 }
 
@@ -26,7 +26,9 @@ device accel {
   inst MASS = plate(400 um, 250 um) at (0, 0);
   inst SUS  = array(suspension(L = 300 um, w = 5 um), count = 2,
                     place = corners(MASS));
-  inst SENSE = combdrive(N = 30, Lf = 50 um) attach (rotor -> MASS.bottom);
+  // sense comb on the top edge: the bottom edge is occupied by the
+  // suspension beams and their anchors
+  inst SENSE = combdrive(N = 30, Lf = 50 um) attach (rotor -> MASS.top);
   inst PAD  = via_metal(120 um, 120 um) at (320 um, 180 um);
 
   net SIG = SENSE.stator;
