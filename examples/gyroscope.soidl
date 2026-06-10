@@ -1,0 +1,76 @@
+// Reproduction of the gyroscope from:
+//   A. Sharaf, S. Sedky, M. Serry, A. Elshurafa, M. Ashour, S. E.-D. Habib,
+//   "A Fully Symmetric and Completely Decoupled MEMS-SOI Gyroscope",
+//   NSTI-Nanotech 2010, Vol. 2, pp. 386-389.
+//
+// The brief publishes the process (5 um SOI, 2 um features, comb l0=20 um /
+// g0=2 um), the simulated mode frequencies (~16.8 kHz, matched) and the comb
+// capacitances, but NOT the spring lengths.  So we infer the finger counts
+// from the published capacitance and let design-closure solve the crab-leg
+// length to the 16.8 kHz drive target -- exactly how the authors sized it --
+// then compare the *emergent* quantities (mode split, Q in air, area).
+
+process soi5 {
+  stack {
+    layer METAL  { thickness = 0.5 um; material = Au }
+    layer DEVICE { thickness = 5 um;   material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;   material = SiO2 }
+    layer HANDLE { thickness = 400 um; material = Si }
+  }
+  rules {
+    release { hole_size = 6 um; hole_pitch = 40 um; max_solid_span = 60 um }
+  }
+}
+
+// A crab-leg suspension: two perpendicular beams in series give compliance
+// in BOTH x and y, which (placed with 4-fold symmetry) yields two nearly
+// degenerate in-plane translation modes -- the drive and sense modes.
+component crab_leg(L = 180 um, w = 4 um) {
+  mech port fixed, mass;
+  derive k = process.DEVICE.E * process.DEVICE.thickness * w^3 / L^3;
+  // drawn in the third quadrant (-x,-y); corners() mirrors each instance so
+  // the leg always extends *outward*, away from the proof-mass centre
+  geometry {
+    beam(L, w, dir = x) at (0 - L/2, 0);          // leg 1 along x
+    beam(L, w, dir = y) at (0 - L, 0 - L/2);       // leg 2 along y
+    anchor(20 um, 20 um) at (0 - L, 0 - L);
+  }
+}
+
+device gyroscope {
+  param f0_target = 16.8 kHz;
+  param V_drive   = 20 V;
+
+  // central proof / sense mass
+  inst M = plate(700 um, 700 um) at (0, 0);
+
+  // four crab-leg suspensions, one per corner (C4 symmetry -> matched modes)
+  inst S = array(crab_leg(L = 180 um, w = 4 um), count = 4,
+                 place = corners(M));
+
+  // drive combs on +-x, sense combs on +-y (l0=20, g0=2, wf=2 per the paper)
+  inst DL = combdrive(N = 60, g = 2 um, ov = 20 um, wf = 2 um, Lf = 40 um)
+            attach (rotor -> M.left);
+  inst DR = combdrive(N = 60, g = 2 um, ov = 20 um, wf = 2 um, Lf = 40 um)
+            attach (rotor -> M.right);
+  inst ST = combdrive(N = 70, g = 2 um, ov = 20 um, wf = 2 um, Lf = 40 um)
+            attach (rotor -> M.top);
+  inst SB = combdrive(N = 70, g = 2 um, ov = 20 um, wf = 2 um, Lf = 40 um)
+            attach (rotor -> M.bottom);
+
+  // size the suspension to the published drive-mode frequency
+  solve S.L such that f_res(M, S) == f0_target within 2%;
+
+  // hard requirements from the spec
+  require f_res(M, S) >= 15 kHz;
+  require area() <= 2.56 mm^2;          // 1.6 x 1.6 mm die budget
+
+  net DRIVE = DL.stator | DR.stator;
+  net SENSE = ST.stator | SB.stator;
+  net GND   = M | S.fixed;
+
+  isolate DRIVE from GND by trench;
+  constraint released(M);
+  constraint anchored(S.fixed, DL.stator, DR.stator, ST.stator, SB.stator);
+}

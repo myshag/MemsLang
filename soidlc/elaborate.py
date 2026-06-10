@@ -577,7 +577,8 @@ class Elaborator:
         dev = self.process.device()
         t = (dev.thickness * 1e-6) if dev else 25e-6
         E = dev.E if dev else 169e9
-        if any(tag in comp.name for tag in ("flexure", "suspension")):
+        if any(tag in comp.name for tag in
+               ("flexure", "suspension", "leg", "spring")):
             L = local.get("L")
             w = local.get("w")
             n = local.get("n_beams", local.get("n_folds"))
@@ -639,13 +640,21 @@ class Elaborator:
                     f"anchor — released geometry would float away "
                     f"(bbox [{x0:.0f},{y0:.0f}]..[{x1:.0f},{y1:.0f}] um)")
 
-        # declared nets must each map onto exactly one island
+        anchored_islands = {c for c, ss in islands.items()
+                            if any(s.mech == "anchored" for s in ss)}
+
+        # declared nets map onto islands.  A net may legitimately span several
+        # *anchored* islands joined by METAL routing (separate stators wired
+        # to one pad); but a net whose refs land on more than one *released*
+        # island cannot be realised in silicon -> that is an error.
         net_comps: Dict[str, set] = {}
         for it in dev.items:
             if not isinstance(it, A.Net):
                 continue
             comps: set = set()
+            n_refs = 0
             for iname, port in _net_refs(it.expr):
+                n_refs += 1
                 ss = self._shapes_for_ref(shapes, iname, port)
                 if not ss:
                     self.warnings.append(
@@ -654,11 +663,16 @@ class Elaborator:
                     continue
                 comps |= {comp_of[id(s)] for s in ss}
             net_comps[it.name] = comps
-            if len(comps) > 1:
+            released = comps - anchored_islands
+            if len(released) > 1:
                 self.errors.append(
-                    f"net {it.name} is split across {len(comps)} disconnected "
-                    f"islands ({sorted(comps)}) — geometry does not realise "
-                    f"the declared node")
+                    f"net {it.name} is split across {len(released)} "
+                    f"disconnected released islands ({sorted(released)}) — "
+                    f"silicon does not realise the declared node")
+            elif len(comps) > 1:
+                self.report.append(
+                    f"net    {it.name} -> {len(comps)} anchored islands "
+                    f"{sorted(comps)} (METAL-routed)")
             elif comps:
                 self.report.append(
                     f"net    {it.name} -> island #{min(comps)}")
