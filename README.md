@@ -240,6 +240,80 @@ The pipeline mirrors the `soidlc` stages from the spec:
     (per-layer colours), SVG top view, and a z-buffered isometric PNG from a
     built-in software rasteriser.
 
+## Process simulation (feature scale)
+
+Alongside the device pipeline there is a family of feature-scale **fabrication**
+simulators — physical level-set etch models, not geometry offsets. They share a
+single C99 + OpenMP level-set core (`etch_core.c`), auto-compiled on first use
+with the system compiler and driven through `ctypes` (pure-Python fallback where
+practical):
+
+- **Bosch DRIE** (`etch.py`) — time-multiplexed deep reactive-ion etch of the
+  structural layer. A polymer/passivation field protects sidewalls while
+  directional ions drill the trench bottom, reproducing scalloping, ARDE /
+  RIE-lag (from a ray-cast sky-visibility factor), footing/notching at the
+  buried oxide, and positive/negative taper & bowing.
+- **Recipe physics** (`recipe_physics.py`) — a semi-empirical map from real
+  recipe parameters (SF₆/C₄F₈ flows, coil/bias powers, pressure, step times,
+  cycle count) onto the effective etch knobs, with calibratable coefficients and
+  process-window warnings (grass risk, mask-selectivity loss).
+- **Anisotropic wet etch** (`koh.py`) — KOH/TMAH bulk micromachining with an
+  orientation-dependent rate: {111} planes ~100× slower meet a (100) surface at
+  54.74°, so a mask opening self-organises into the classic facetted pit /
+  V-groove / inverted pyramid (2D and full 3D, with STL heightmap export).
+- **Corner compensation** (`corner.py`, below) — convex-corner undercut and the
+  sacrificial mask structures that defeat it.
+- **Wafer bonding** (`assembly.py`) — bond a cap wafer over the device, forming a
+  sealed cavity; recomputes Q for the encapsulated gas environment (vacuum
+  sealing lifts Q from ~10² toward the anchor/TED-limited ceiling).
+
+### Convex-corner undercut & compensation
+
+On a (100) wafer a *concave* feature (an etch pit) self-terminates on the slow
+{111} planes and stays sharp, but a *convex* corner — the outside corner of a
+mesa or boss you want to **keep** — exposes the fastest intermediate planes
+(≈{410}/{310}, ~28° off ⟨110⟩) at its 45° bisector and is beveled/undercut by
+roughly `U ≈ ratio · depth` (ratio ≈ 1.4–1.8 for KOH). `corner.py` simulates the
+mask undercut directly with a **plan-view** (top-down) level-set whose front
+speed follows the in-plane etch-rate diagram `R(θ)`:
+
+- normal along ⟨110⟩ (θ = 0): a {111} sidewall forms → ~zero undercut (`r_slow`);
+- normal near ⟨410⟩ (θ ≈ 28°): the fastest planes → peak undercut `r_peak`;
+- normal along ⟨100⟩ (θ = 45°): an intermediate {100}-sidewall rate `r100`.
+
+That three-rate diagram matters: lumping ⟨100⟩ in with the corner would be wrong,
+and the gap between `r_peak` (corner) and `r100` (a ⟨100⟩ sidewall) is exactly
+why a ⟨100⟩ beam can shield a corner. A **corner compensation structure** is
+extra sacrificial mask at the convex corner, sized so the fast-plane undercut
+consumes the sacrifice and only just reaches the true corner at the target depth:
+
+- `square_comp(corner, size)` — a ⟨110⟩ square centred on the corner; its
+  sidewalls run along the slow {111} so only its outer corner bevels in. Robust;
+  protects once `size > √2 · U`.
+- `bar_comp(corner, outx, outy, length, width)` — a ⟨100⟩ beam projecting
+  diagonally outward; area-efficient but sacrificial (its own ⟨100⟩ sidewalls
+  undercut at `r100`, so it must be wide enough, `width ≳ 2·r100·U`).
+
+```
+python3 examples/corner_demo.py
+anisotropic etch: depth 20 um, convex-corner undercut budget 30.0 um
+a <110> compensation square protects when its side > sqrt(2)*U = 42.4 um
+bare mesa:          corner (50,50) survives? False   (all four beveled off)
+compensated (48um): corner (50,50) survives? True    (all four kept sharp)
+```
+
+| bare mesa — convex corners beveled | with ⟨110⟩ corner compensation |
+| --- | --- |
+| ![bare](docs/corner_bare.png) | ![compensated](docs/corner_compensated.png) |
+
+Blue = silicon that survived the timed etch, red = mask area lost to undercut.
+The bare 100 µm square erodes to an octagon; the compensated one keeps square
+corners (reaching the yellow corner marks), the compensation squares spent down
+to small tabs. *Limitation:* the in-plane normal is taken from central
+differences, so concave mask corners round by a few µm instead of staying
+perfectly sharp — fine for sizing compensation (the convex topic), not for
+absolute concave-corner geometry.
+
 ## Supported SOIDL subset (v0.1)
 
 Implemented: `process { stack / masks / rules }`, `component(params) { port,
@@ -279,8 +353,15 @@ soidlc/
   svg.py         top-view SVG preview
   render.py      pure-Python PNG software renderer
   cli.py         `soidlc` command-line entry point
-examples/        comb_resonator.soidl, accelerometer.soidl
-tests/           unittest suite (units, parsing, watertight meshes, e2e)
+  etch_core.c    shared C99+OpenMP level-set core (auto-compiled)
+  etch.py        Bosch DRIE feature-scale simulation
+  recipe_physics.py recipe params -> effective etch knobs
+  koh.py         anisotropic (KOH/TMAH) wet etch, 2D + 3D
+  corner.py      convex-corner undercut + compensation structures
+  assembly.py    cap-wafer bonding + sealed-cavity Q
+examples/        comb_resonator.soidl, accelerometer.soidl, gyroscope*.soidl,
+                 etch_demo.py, koh_demo.py, corner_demo.py, wafer_demo.py
+tests/           unittest suite (units, parsing, watertight meshes, FEM, etch, e2e)
 ```
 
 ## Tests
