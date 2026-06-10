@@ -172,5 +172,62 @@ class TestConnectivity(unittest.TestCase):
         self.assertNotEqual(rotor, stator)
 
 
+class TestFEM(unittest.TestCase):
+    """Validate the built-in plane-stress solver against beam theory."""
+
+    E, NU, RHO, T = 169e9, 0.22, 2330.0, 25e-6
+    L_UM, H_UM = 100.0, 10.0
+
+    def _cantilever(self, h):
+        from soidlc import fem2d
+        shapes = [
+            G.Shape("DEVICE", G.rect_corner(-20, 0, 20, self.H_UM),
+                    "anchor", "anchored"),
+            G.Shape("DEVICE", G.rect_corner(0, 0, self.L_UM, self.H_UM),
+                    "beam", "released"),
+        ]
+        return fem2d.build_mesh(shapes, h)
+
+    def test_cantilever_static_deflection(self):
+        from soidlc import fem2d
+        mesh = self._cantilever(2.5)
+        tip = [n for n, (x, y) in enumerate(mesh.nodes)
+               if abs(x - self.L_UM) < 1e-6 and n not in mesh.fixed]
+        self.assertTrue(tip)
+        F = 1e-6                                  # 1 uN, shared by tip nodes
+        loads = {n: (0.0, F / len(tip)) for n in tip}
+        u = fem2d.static_solve(mesh, self.E, self.NU, self.T, loads)
+        dy = sum(u[n][1] for n in tip) / len(tip)
+        L, hgt = self.L_UM * 1e-6, self.H_UM * 1e-6
+        I = self.T * hgt ** 3 / 12.0
+        euler = F * L ** 3 / (3.0 * self.E * I)
+        self.assertLess(abs(dy - euler) / euler, 0.12,
+                        f"FEM {dy:.3e} vs Euler {euler:.3e}")
+
+    def test_cantilever_first_mode(self):
+        from soidlc import fem2d
+        mesh = self._cantilever(2.5)
+        f = fem2d.modal(mesh, self.E, self.NU, self.RHO, self.T, n_modes=1)
+        self.assertTrue(f)
+        L, hgt = self.L_UM * 1e-6, self.H_UM * 1e-6
+        I = self.T * hgt ** 3 / 12.0
+        A = self.T * hgt
+        analytic = (1.8751 ** 2 / (2 * math.pi * L ** 2)) \
+            * math.sqrt(self.E * I / (self.RHO * A))
+        self.assertLess(abs(f[0] - analytic) / analytic, 0.12,
+                        f"FEM {f[0]:.0f} Hz vs analytic {analytic:.0f} Hz")
+
+    def test_device_fem_end_to_end(self):
+        with open(os.path.join(EX, "accelerometer.soidl")) as f:
+            art = compile_source(f.read(), fem=True, fem_h=20.0)
+        fem_lines = [l for l in art.report if l.startswith("fem")]
+        self.assertTrue(fem_lines, art.report)
+        # mode 1 must agree with the lumped estimate within 25%
+        cmp = [l for l in fem_lines if "vs lumped" in l]
+        self.assertTrue(cmp)
+        pct = float(cmp[0].rsplit("(", 1)[1].rstrip("%)"))
+        self.assertLess(abs(pct), 25.0, cmp[0])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

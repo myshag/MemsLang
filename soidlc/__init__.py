@@ -33,7 +33,8 @@ class Artifacts:
 
 def compile_source(src: str, device: Optional[str] = None,
                    out_prefix: Optional[str] = None,
-                   include_handle: bool = True) -> Artifacts:
+                   include_handle: bool = True,
+                   fem: bool = False, fem_h: float = 12.0) -> Artifacts:
     ast = parse(src)
     elab = Elaborator(ast)
     result = elab.elaborate_device(device)
@@ -41,6 +42,10 @@ def compile_source(src: str, device: Optional[str] = None,
 
     art = Artifacts(elab.process, result, mesh, elab.report, elab.warnings,
                     elab.errors, model=result.model)
+
+    if fem:
+        from . import fem2d
+        fem2d.analyze(elab, art, h=fem_h)
 
     if out_prefix:
         os.makedirs(os.path.dirname(out_prefix) or ".", exist_ok=True)

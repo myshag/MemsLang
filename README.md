@@ -47,7 +47,8 @@ report  : derive/check/solve results with evaluated values
 ```
 
 CLI flags: `-o/--out <prefix>`, `-d/--device <name>` (which device to build),
-`--no-handle` (omit the substrate slab), `-q/--quiet`.
+`--no-handle` (omit the substrate slab), `--fem` / `--fem-h <um>` (run the
+built-in 2D plane-stress modal FEM), `-q/--quiet`.
 
 ## How it works
 
@@ -94,11 +95,35 @@ The pipeline mirrors the `soidlc` stages from the spec:
    T-junction-free** geometry (verified in tests).
 8. **Model extraction** — a lumped model is assembled from the geometry:
    suspended mass `m` from released DEVICE area × thickness × ρ, stiffness
-   `k` from folded-flexure `derive`s, and the resonant frequency
+   `k` from flexure `derive`s, and the resonant frequency
    `f0 = √(k/m)/2π`.
-9. **Export** (`exporters.py`, `svg.py`, `render.py`) — binary STL, OBJ+MTL
-   (per-layer colours), SVG top view, and a z-buffered isometric PNG from a
-   built-in software rasteriser.
+9. **Built-in 2D FEM** (`fem2d.py`, opt-in via `--fem`) — a small pure-Python
+   plane-stress solver that verifies the lumped model against the actual
+   geometry. Each suspended island is meshed on a tensor grid of rectangles
+   (release holes are smeared into the mass density; comb fingers are lumped
+   as point masses on their backbone); everything under `anchored` shapes is
+   clamped — the boundary conditions come from the release analysis, not
+   from annotations. Elements are Q4 rectangles enriched with Wilson
+   incompatible modes (so slender flexure elements don't shear-lock), solved
+   with a banded Cholesky factorisation and inverse iteration for the lowest
+   modes. Validated against Euler–Bernoulli beam theory to <1% (see tests);
+   on the examples mode 1 lands within a few percent of the lumped f0:
+
+   ```
+   fem    island #1: 1260 elements, 2904 free dof (h = 12 um)
+   fem    island #1 modes: 30.93 kHz, 753.96 kHz, 754.54 kHz
+   fem    mode 1 vs lumped f0: 30.93 kHz vs 29.15 kHz (+6.1%)
+   ```
+
+   `--fem-h <um>` controls the target element size (default 12 µm). The
+   solver earned its keep immediately: it exposed that the original
+   accelerometer suspensions overlapped the proof mass over half their
+   length (FEM read 2.8× the lumped frequency — exactly the ×8 stiffness of
+   the halved beams), which led to the outward-mirrored `corners()`
+   placement semantics.
+10. **Export** (`exporters.py`, `svg.py`, `render.py`) — binary STL, OBJ+MTL
+    (per-layer colours), SVG top view, and a z-buffered isometric PNG from a
+    built-in software rasteriser.
 
 ## Supported SOIDL subset (v0.1)
 
@@ -129,6 +154,7 @@ soidlc/
   primitives.py  primitive -> 2D polygon generators
   elaborate.py   hierarchy expansion, placement, model extraction
   connectivity.py electrical island extraction + net/isolate verification
+  fem2d.py       pure-Python plane-stress FEM (Q6 elements, modal/static)
   geometry.py    2D polygon kernel
   mesh.py        triangulation + 2.5D extrusion (watertight grid mesher)
   build3d.py     stack-aware mesh assembly (anchors/box/handle)

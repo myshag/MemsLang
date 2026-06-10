@@ -61,6 +61,15 @@ class Polygon:
 
         return Polygon(rot(self.exterior), [rot(h) for h in self.holes])
 
+    def mirrored(self, mx: bool, my: bool) -> "Polygon":
+        fx = -1.0 if mx else 1.0
+        fy = -1.0 if my else 1.0
+
+        def m(r: Ring) -> Ring:
+            return [(x * fx, y * fy) for x, y in r]
+
+        return Polygon(m(self.exterior), [m(h) for h in self.holes])
+
     def bbox(self) -> Tuple[float, float, float, float]:
         xs = [p[0] for p in self.exterior]
         ys = [p[1] for p in self.exterior]

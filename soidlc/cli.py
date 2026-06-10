@@ -20,6 +20,11 @@ def main(argv=None) -> int:
                     help="name of the device to elaborate (default: last)")
     ap.add_argument("--no-handle", action="store_true",
                     help="omit the HANDLE substrate slab")
+    ap.add_argument("--fem", action="store_true",
+                    help="run the built-in 2D plane-stress FEM "
+                         "(modal analysis of each suspended island)")
+    ap.add_argument("--fem-h", type=float, default=12.0, metavar="UM",
+                    help="FEM target element size in um (default 12)")
     ap.add_argument("-q", "--quiet", action="store_true")
     args = ap.parse_args(argv)
 
@@ -31,7 +36,8 @@ def main(argv=None) -> int:
 
     try:
         art = compile_file(args.input, device=args.device, out_prefix=out,
-                           include_handle=not args.no_handle)
+                           include_handle=not args.no_handle,
+                           fem=args.fem, fem_h=args.fem_h)
     except Exception as e:  # noqa: BLE001 - surface a clean message
         print(f"soidlc: error: {e}", file=sys.stderr)
         return 1

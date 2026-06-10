@@ -48,6 +48,9 @@ class Layer:
     z1: float = 0.0           # um (top)
     material: str = ""
     color: Tuple[float, float, float] = (0.6, 0.6, 0.6)
+    E: float = 169e9          # Young's modulus, Pa
+    rho: float = 2330.0       # density, kg/m^3
+    nu: float = 0.22          # Poisson's ratio (plane-stress isotropic approx)
 
 
 _LAYER_COLORS = {
@@ -139,14 +142,21 @@ class Elaborator:
         for ld in proc.layers:
             th = 1.0
             material = ""
+            props: Dict[str, float] = {}
             for k, v in ld.props:
                 if k == "thickness":
                     th = self._eval(v, {}).um
                 elif k == "material":
                     material = str(self._eval(v, {}))
+                elif k in ("E", "rho", "nu"):
+                    val = self._eval(v, {})
+                    if isinstance(val, Quantity):
+                        props[k] = val.value
             p.layers[ld.name] = Layer(
                 ld.name, th, material=material,
-                color=_LAYER_COLORS.get(ld.name, (0.6, 0.6, 0.6)))
+                color=_LAYER_COLORS.get(ld.name, (0.6, 0.6, 0.6)),
+                E=props.get("E", 169e9), rho=props.get("rho", 2330.0),
+                nu=props.get("nu", 0.22))
             p.order.append(ld.name)
         if not p.order:
             return _default_process()
@@ -222,7 +232,9 @@ class Elaborator:
                 if node.attr == "thickness":
                     return Quantity(lay.thickness * 1e-6, LENGTH)
                 if node.attr == "E":
-                    return Quantity(169e9, (-1, 1, -2, 0))
+                    return Quantity(lay.E, (-1, 1, -2, 0))
+                if node.attr == "rho":
+                    return Quantity(lay.rho, (-3, 1, 0, 0))
             return Sym(f"process.{layer}.{node.attr}")
         base = self._eval(obj, env)
         if isinstance(base, dict) and node.attr in base:
@@ -418,25 +430,31 @@ class Elaborator:
             kx = sub.model.get("k_x")
             if isinstance(kx, Quantity):
                 k_total += kx.value
-            px, py = points[i % len(points)] if points else (0.0, 0.0)
+            px, py, mx, my = (points[i % len(points)] if points
+                              else (0.0, 0.0, False, False))
+            if mx or my:
+                sub = _mirror_result(sub, mx, my)
             sub = _translate_result(sub, px, py)
             shapes.extend(sub.shapes)
         model = {"k_x": Quantity(k_total, (0, 1, -2, 0))} if k_total else {}
         return InstanceResult(shapes, G.bbox_of(shapes), {}, model)
 
     def _resolve_points(self, place_node, env, insts, count
-                        ) -> List[Tuple[float, float]]:
+                        ) -> List[Tuple[float, float, bool, bool]]:
         if place_node is None:
             # default: spread along a line
-            return [(i * 50.0, 0.0) for i in range(count)]
+            return [(i * 50.0, 0.0, False, False) for i in range(count)]
         if isinstance(place_node, A.Call) and isinstance(place_node.func, A.Name):
             fn = place_node.func.id
             if fn == "corners" and place_node.args:
                 target = place_node.args[0]
                 if isinstance(target, A.Name) and target.id in insts:
                     x0, y0, x1, y1 = insts[target.id].bbox
-                    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-        return [(0.0, 0.0)]
+                    # mirror each instance outward, away from the target's
+                    # centre, so anchors end up outboard at every corner
+                    return [(x0, y0, False, False), (x1, y0, True, False),
+                            (x1, y1, True, True), (x0, y1, False, True)]
+        return [(0.0, 0.0, False, False)]
 
     def _call_primitive(self, fname, call: A.Call, env) -> List[G.Shape]:
         args = [self._eval(a, env) for a in call.args]
@@ -530,14 +548,15 @@ class Elaborator:
         model: Dict[str, object] = {"name": comp.name}
         dev = self.process.device()
         t = (dev.thickness * 1e-6) if dev else 25e-6
-        E = 169e9
-        if comp.name.endswith("flexure") or "flexure" in comp.name:
+        E = dev.E if dev else 169e9
+        if any(tag in comp.name for tag in ("flexure", "suspension")):
             L = local.get("L")
             w = local.get("w")
-            n = local.get("n_folds")
+            n = local.get("n_beams", local.get("n_folds"))
             if isinstance(L, Quantity) and isinstance(w, Quantity):
-                nf = int(n.value) if isinstance(n, Quantity) else 2
-                k = (2 * nf) * (E * t * (w.value ** 3)) / (L.value ** 3)
+                # n clamped-guided beams in parallel: k = n * E t w^3 / L^3
+                nf = int(n.value) if isinstance(n, Quantity) else 1
+                k = nf * (E * t * (w.value ** 3)) / (L.value ** 3)
                 model["k_x"] = Quantity(k, (0, 1, -2, 0))
         return model
 
@@ -575,6 +594,7 @@ class Elaborator:
         islands: Dict[int, List[G.Shape]] = {}
         for s, c in zip(shapes, comp):
             islands.setdefault(c, []).append(s)
+        self.islands = sorted(islands.items())   # consumed by the FEM stage
         self.report.append(
             f"connectivity: {len(shapes)} DEVICE polygons -> "
             f"{len(islands)} electrical island(s)")
@@ -701,6 +721,16 @@ def _translate_result(res: InstanceResult, dx: float, dy: float) -> InstanceResu
     bbox = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
     ports = {k: (x + dx, y + dy) for k, (x, y) in res.ports.items()}
     return InstanceResult(shapes, bbox, ports, res.model)
+
+
+def _mirror_result(res: InstanceResult, mx: bool, my: bool) -> InstanceResult:
+    shapes = [G.Shape(s.layer, s.polygon.mirrored(mx, my), s.label, s.mech,
+                      s.owner)
+              for s in res.shapes]
+    fx = -1.0 if mx else 1.0
+    fy = -1.0 if my else 1.0
+    ports = {k: (x * fx, y * fy) for k, (x, y) in res.ports.items()}
+    return InstanceResult(shapes, G.bbox_of(shapes), ports, res.model)
 
 
 def _rotate_result(res: InstanceResult, k90: int) -> InstanceResult:
