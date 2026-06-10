@@ -33,6 +33,10 @@ def build_env(elab, res) -> Dict[str, object]:
     env: Dict[str, object] = dict(getattr(elab, "device_env", {}) or {})
     model = res.model or {}
     proc = elab.process
+    # FEM-in-the-loop calibration factors set by the closure stage: they
+    # absorb the systematic lumped-vs-FEM bias so that solving against the
+    # metric drives the *FEM-predicted* value onto the spec
+    cal = getattr(elab, "metric_calibration", {}) or {}
 
     trans = _reduce.find_transducers(
         res.shapes, getattr(elab, "device_ast", None), proc)
@@ -60,7 +64,8 @@ def build_env(elab, res) -> Dict[str, object]:
         return b
 
     def f_res(*_a, **_k) -> Quantity:
-        return _model_q("f0", "resonant frequency")
+        q = _model_q("f0", "resonant frequency")
+        return _q(q.value * cal.get("f_res", 1.0), q.dim)
 
     def q_estimate(*_a, **_k) -> Quantity:
         m = _model_q("m", "Q").value

@@ -34,14 +34,16 @@ class Artifacts:
 def compile_source(src: str, device: Optional[str] = None,
                    out_prefix: Optional[str] = None,
                    include_handle: bool = True,
-                   fem: bool = False, fem_h: float = 12.0) -> Artifacts:
+                   fem: bool = False, fem_h: float = 12.0,
+                   fem_closure: bool = False) -> Artifacts:
     ast = parse(src)
     elab = Elaborator(ast)
 
     # design closure: solve free parameters against the spec, then do the
     # final (loud) elaboration with the solved values
     from . import closure
-    overrides = closure.run(elab, device)
+    overrides = closure.run(elab, device, fem_calibrate=fem_closure,
+                            fem_h=fem_h if fem else 20.0)
     result = elab.elaborate_device(device, overrides=overrides)
     mesh = build3d.build_mesh(result, elab.process, include_handle=include_handle)
 

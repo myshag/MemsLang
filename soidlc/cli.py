@@ -25,6 +25,10 @@ def main(argv=None) -> int:
                          "(modal analysis of each suspended island)")
     ap.add_argument("--fem-h", type=float, default=12.0, metavar="UM",
                     help="FEM target element size in um (default 12)")
+    ap.add_argument("--fem-closure", action="store_true",
+                    help="use the FEM inside the design-closure loop to "
+                         "absorb the lumped-model bias (solve targets are "
+                         "met by the FEM-predicted frequency)")
     ap.add_argument("-q", "--quiet", action="store_true")
     args = ap.parse_args(argv)
 
@@ -37,7 +41,8 @@ def main(argv=None) -> int:
     try:
         art = compile_file(args.input, device=args.device, out_prefix=out,
                            include_handle=not args.no_handle,
-                           fem=args.fem, fem_h=args.fem_h)
+                           fem=args.fem, fem_h=args.fem_h,
+                           fem_closure=args.fem_closure)
     except Exception as e:  # noqa: BLE001 - surface a clean message
         print(f"soidlc: error: {e}", file=sys.stderr)
         return 1

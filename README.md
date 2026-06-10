@@ -48,7 +48,8 @@ report  : derive/check/solve results with evaluated values
 
 CLI flags: `-o/--out <prefix>`, `-d/--device <name>` (which device to build),
 `--no-handle` (omit the substrate slab), `--fem` / `--fem-h <um>` (run the
-built-in 2D plane-stress modal FEM), `-q/--quiet`.
+built-in 2D plane-stress modal FEM), `--fem-closure` (FEM-in-the-loop design
+closure), `-q/--quiet`.
 
 ## How it works
 
@@ -147,11 +148,30 @@ The pipeline mirrors the `soidlc` stages from the spec:
     ```
 
     A violated `require` on the final geometry is a compile error, same as a
-    connectivity mismatch. The closed design then flows into FEM, which
-    independently verifies the synthesised geometry (mode 1 = 21.2 kHz for
-    the 20 kHz lumped target — the known lumped-vs-FEM bias an outer
-    iteration could absorb). The whole closure loop runs in ~1 s (each
-    design evaluation is a quiet re-elaboration, ~10 ms).
+    connectivity mismatch. The whole closure loop runs in ~1 s (each
+    design evaluation is a quiet re-elaboration, ~10 ms). Equations are
+    weighted by their `within` tolerances, so the optimiser spends its
+    budget where the spec is tight.
+
+    **FEM in the loop** (`--fem-closure`): the lumped model carries a
+    systematic bias versus FEM (truss compliance, distributed beam mass —
+    about +6% here). An outer loop measures that bias on each closed
+    design (modal FEM of the suspended island), folds it into the `f_res`
+    metric as a calibration factor, and re-solves from the previous
+    optimum until the factor converges:
+
+    ```
+    closure: FEM calibration pass 1: f_fem=21.18 kHz vs lumped 20.00 kHz -> factor 1.0591
+    closure: FEM calibration pass 2: f_fem=20.01 kHz vs lumped 18.89 kHz -> factor 1.0592
+    closure: solved S.L = 293.145 um  [f_res(M, S) == f0_target; residual +0.02%, ok]
+    closure: solved D1.N = 16.0643    [stroke_max(V_drive) == 8 um; residual +0.44%, ok]
+    ...
+    fem    island #1 modes: 20.01 kHz, ...
+    ```
+
+    The spec is now met by the *FEM-predicted* frequency (20.01 kHz on a
+    20 kHz target), with the lumped target internally retargeted to
+    18.89 kHz. Total cost: ~9 s (two NM runs + three coarse modal solves).
 
 11. **Model order reduction** (`reduce.py`, runs with `--fem`) — the FEM
     modes are projected into a behavioural model: each mode becomes one

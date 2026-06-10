@@ -215,6 +215,22 @@ class TestClosure(unittest.TestCase):
         self.assertFalse([l for l in art.report if "closure" in l])
         self.assertEqual(art.errors, [])
 
+    def test_fem_in_the_loop_calibration(self):
+        """With --fem-closure the spec must be met by the FEM-predicted
+        frequency, not the lumped estimate."""
+        with open(os.path.join(EX, "comb_resonator.soidl")) as f:
+            art = compile_source(f.read(), fem=True, fem_closure=True,
+                                 fem_h=20.0)
+        self.assertEqual(art.errors, [], art.errors)
+        cal = [l for l in art.report if "FEM calibration" in l]
+        self.assertTrue(cal, art.report)
+        # final FEM verification: mode 1 within 2% of the 20 kHz target
+        line = [l for l in art.report if "mode 1 vs lumped" in l][0]
+        f_fem_khz = float(line.split("vs lumped f0: ")[1].split(" kHz")[0])
+        self.assertLess(abs(f_fem_khz - 20.0) / 20.0, 0.02, line)
+        # and the lumped f0 must now sit *below* target (retargeted)
+        self.assertLess(art.model["f0"].value, 19.6e3)
+
 
 class TestFEM(unittest.TestCase):
     """Validate the built-in plane-stress solver against beam theory."""

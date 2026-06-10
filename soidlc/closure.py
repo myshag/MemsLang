@@ -106,14 +106,23 @@ def _nelder_mead(f, x0: List[float], step: float = 0.18,
     return pts[best], vals[best], evals[0]
 
 
-def run(elab, device: Optional[str] = None) -> Dict[str, Quantity]:
-    """Solve the device's free parameters.  Returns the overrides dict."""
+def run(elab, device: Optional[str] = None,
+        fem_calibrate: bool = False, fem_h: float = 20.0
+        ) -> Dict[str, Quantity]:
+    """Solve the device's free parameters.  Returns the overrides dict.
+
+    With ``fem_calibrate`` an outer loop measures the systematic
+    lumped-vs-FEM frequency bias on each closed design, folds it into the
+    ``f_res`` metric as a calibration factor, and re-solves — so the spec is
+    met by the FEM-predicted frequency, not the lumped estimate.
+    """
     name = elab.resolve_device_name(device)
     dev = elab.devices[name]
     solves = [it for it in dev.items if isinstance(it, A.Solve)]
     requires = [it for it in dev.items if isinstance(it, A.Require)]
     if not solves:
         return {}
+    elab.metric_calibration = {}
 
     # baseline run records the declared values of the solve targets
     mark = (len(elab.report), len(elab.warnings), len(elab.errors))
@@ -145,36 +154,117 @@ def run(elab, device: Optional[str] = None) -> Dict[str, Quantity]:
             out[s.target] = Quantity(q.value * m, q.dim)
         return out
 
+    # tolerance per equation: a 1%-tolerance equation weighs more in the
+    # penalty than a 5% one, so NM spends its budget where the spec is tight
+    def _tol_of(s) -> float:
+        if s.within is None:
+            return 0.02
+        try:
+            t = elab._eval(s.within, {})
+            return t.value if isinstance(t, Quantity) else float(t)
+        except Exception:
+            return 0.02
+    tols = [_tol_of(s) for s in targets]
+
     def penalty(mults: List[float]) -> float:
         ov = overrides_for(mults)
         try:
             res = elab.elaborate_device(name, overrides=ov, quiet=True)
             env = metrics.build_env(elab, res)
             p = 0.0
-            for s in targets:
-                p += _residual(elab, s.expr, env) ** 2
+            for s, tol in zip(targets, tols):
+                p += (_residual(elab, s.expr, env) / tol) ** 2
             for rq in requires:
-                p += _residual(elab, rq.expr, env) ** 2
+                p += (_residual(elab, rq.expr, env) / 0.02) ** 2
             return p
         except Exception:
             return 1e6
         finally:
             _truncate()
 
-    if penalty([1.0] * len(targets)) >= 1e6:
+    def solve_once(start: Optional[List[float]] = None):
+        start = start or [1.0] * len(targets)
+        if penalty(start) >= 1e6:
+            return None, None, 0.0, 0
+        best, v, ev = _nelder_mead(penalty, start)
+        return overrides_for(best), best, v, ev
+
+    def fem_measure(ov) -> Optional[Tuple[float, float]]:
+        """(f_fem_mode1, f_lumped) for a candidate design, or None.
+
+        Meshes only the suspended island (same domain as the verification
+        stage) so the calibration factor transfers exactly.
+        """
+        from . import connectivity, fem2d
+        try:
+            res = elab.elaborate_device(name, overrides=ov, quiet=True)
+            f0 = res.model.get("f0")
+            if not isinstance(f0, Quantity):
+                return None
+            shapes = [s for s in res.shapes if s.layer == "DEVICE"]
+            comp = connectivity.components([s.polygon for s in shapes])
+            groups: Dict[int, list] = {}
+            for s, c in zip(shapes, comp):
+                groups.setdefault(c, []).append(s)
+            suspended = [ss for ss in groups.values()
+                         if any(s.mech == "anchored" for s in ss)
+                         and any(s.mech == "released" for s in ss)]
+            if not suspended:
+                return None
+            island = max(suspended,
+                         key=lambda ss: sum(s.polygon.area() for s in ss
+                                            if s.mech == "released"))
+            mesh = fem2d.build_mesh(island, fem_h)
+            if not mesh.elems or len(mesh.elems) > fem2d.MAX_ELEMENTS:
+                return None
+            d = elab.process.device()
+            freqs = fem2d.modal(mesh, d.E, d.nu, d.rho,
+                                d.thickness * 1e-6, n_modes=1)
+            return (freqs[0], f0.value) if freqs else None
+        except Exception:
+            return None
+        finally:
+            _truncate()
+
+    overrides, best_mults, val, n_evals = solve_once()
+    if overrides is None:
         elab.warnings.append(
             "closure: spec metrics could not be evaluated; "
             "solve targets left at their declared values")
         return {}
 
-    best, val, n_evals = _nelder_mead(penalty, [1.0] * len(targets))
-    overrides = overrides_for(best)
+    cal_lines: List[str] = []
+    if fem_calibrate:
+        factor_prev = 1.0
+        for outer in range(1, 4):
+            meas = fem_measure(overrides)
+            if meas is None:
+                cal_lines.append(
+                    "closure: FEM calibration unavailable for this device")
+                break
+            f_fem, f_lump = meas
+            factor = f_fem / f_lump
+            cal_lines.append(
+                f"closure: FEM calibration pass {outer}: "
+                f"f_fem={f_fem / 1e3:.2f} kHz vs lumped "
+                f"{f_lump / 1e3:.2f} kHz -> factor {factor:.4f} "
+                f"(h = {fem_h:g} um)")
+            if abs(factor - factor_prev) < 0.003:
+                break
+            elab.metric_calibration = {"f_res": factor}
+            factor_prev = factor
+            o2, m2, val, ev2 = solve_once(start=best_mults)
+            if o2 is None:
+                break
+            overrides, best_mults = o2, m2
+            n_evals += ev2
 
     # report the solution with per-equation residuals
     res = elab.elaborate_device(name, overrides=overrides, quiet=True)
     env = metrics.build_env(elab, res)
     residuals = [_residual(elab, s.expr, env) for s in targets]
     _truncate()
+    elab.report.extend(cal_lines)
     for s, r in zip(targets, residuals):
         tol = None
         if s.within is not None:
