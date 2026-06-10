@@ -122,10 +122,39 @@ The pipeline mirrors the `soidlc` stages from the spec:
    the halved beams), which led to the outward-mirrored `corners()`
    placement semantics.
 
-   With an output prefix, `--fem` also writes deformation pictures: a
-   mode-shape panel (grey undeformed mesh + deformed mesh coloured by
-   displacement magnitude) and an isometric render of the device deformed
-   by mode 1 (exaggerated):
+10. **Model order reduction** (`reduce.py`, runs with `--fem`) — the FEM
+    modes are projected into a behavioural model: each mode becomes one
+    oscillator `q̈ + 2ζωq̇ + ω²q = φᵀf`, and comb transducers couple in
+    through modal participation factors measured at their rotor backbones.
+    Transducer data (N, gap, overlap, drive axis, attachment) is re-derived
+    from the elaborated geometry, so the model cannot disagree with the
+    layout; gas damping (slide film over the BOX gap + comb finger films)
+    supplies Q. Effective drive-point parameters replace the naive lumped
+    ones (`m_eff = 1/φ₁², k_eff = ω₁²m_eff`). Three exports per device:
+
+    - `<prefix>_model.py` — standalone pure-Python ODE model (RK4 transient,
+      analytic frequency response, ring-down self-test);
+    - `<prefix>_model.cir` — SPICE Butterworth–Van Dyke subcircuit
+      (motional Rm/Lm/Cm from `η = V_dc·dC/dx`, plus C0 feedthrough), ready
+      for LTspice co-simulation with readout electronics;
+    - `<prefix>_model.va` — Verilog-A module (modal states on internal
+      nodes, electrostatic force in, motional current out).
+
+    ```
+    rom    transducer D1 (net DRIVE): N=24, g=2.00 um, dC/dx=5.313e-09 F/m, ...
+    rom    mode 1 @ drive point: m_eff=5.728e-09 kg, k_eff=2.164e+02 N/m, Q≈617 (air)
+    rom    BVD @ V_dc=30 V: Rm=7.106e+07 ohm, Lm=2.255e+05 H, Cm=1.174e-16 F,
+           f_series=30.93 kHz
+    ```
+
+    The exports are self-verifying: ring-down of the generated ODE model
+    reproduces the FEM mode-1 frequency to <0.01%, and the BVD series
+    resonance matches by construction (both checked in tests).
+
+11. With an output prefix, `--fem` also writes deformation pictures: a
+    mode-shape panel (grey undeformed mesh + deformed mesh coloured by
+    displacement magnitude) and an isometric render of the device deformed
+    by mode 1 (exaggerated):
 
    | mode shapes (comb resonator) |
    | --- |
@@ -168,6 +197,8 @@ soidlc/
   elaborate.py   hierarchy expansion, placement, model extraction
   connectivity.py electrical island extraction + net/isolate verification
   fem2d.py       pure-Python plane-stress FEM (Q6 elements, modal/static)
+  reduce.py      model order reduction -> Python ODE / SPICE BVD / Verilog-A
+  femplot.py     mode-shape panels + deformed 3D renders
   geometry.py    2D polygon kernel
   mesh.py        triangulation + 2.5D extrusion (watertight grid mesher)
   build3d.py     stack-aware mesh assembly (anchors/box/handle)

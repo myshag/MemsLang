@@ -481,3 +481,10 @@ def analyze(elab, art, h: float = 12.0,
             art.files[f"fem_3d_{cid}"] = d3_png
             art.report.append(
                 f"fem    island #{cid} plots: {modes_png}, {d3_png}")
+        # model order reduction: modal data -> behavioural model exports
+        try:
+            from . import reduce as _rom
+            _rom.build(elab, art, ss, mesh, freqs, vecs, dof_of,
+                       out_prefix=plot_prefix)
+        except Exception as e:  # noqa: BLE001 - ROM is best-effort
+            art.warnings.append(f"rom: extraction failed: {e}")

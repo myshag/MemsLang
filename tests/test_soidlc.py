@@ -248,5 +248,65 @@ class TestFEM(unittest.TestCase):
                 self.assertGreater(h, 100)
 
 
+class TestROM(unittest.TestCase):
+    """The generated behavioural models must agree with the FEM they came
+    from: ring-down of the ODE model reproduces mode 1, and the SPICE BVD
+    series resonance matches it."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        cls._tmp = tempfile.TemporaryDirectory()
+        prefix = os.path.join(cls._tmp.name, "res")
+        with open(os.path.join(EX, "comb_resonator.soidl")) as f:
+            cls.art = compile_source(f.read(), out_prefix=prefix,
+                                     fem=True, fem_h=20.0)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def _load_model(self):
+        import importlib.util
+        path = self.art.files["rom_py"]
+        spec = importlib.util.spec_from_file_location("rom_model", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_ode_ringdown_matches_mode1(self):
+        mod = self._load_model()
+        f_est = mod.estimate_resonance()
+        self.assertGreater(f_est, 0)
+        self.assertLess(abs(f_est - mod.F_MODES[0]) / mod.F_MODES[0], 0.02)
+
+    def test_ode_static_deflection_consistent(self):
+        mod = self._load_model()
+        F = mod.force(mod.DRIVE_PORT, mod.V_DC)
+        x_static = abs(mod.freq_response(1.0)) * F
+        self.assertLess(abs(x_static - F / mod.K_EFF) / (F / mod.K_EFF),
+                        0.05)
+
+    def test_spice_bvd_resonance(self):
+        with open(self.art.files["rom_cir"]) as f:
+            txt = f.read()
+        Lm = float([l for l in txt.splitlines()
+                    if l.startswith("Lm")][0].split()[-1])
+        Cm = float([l for l in txt.splitlines()
+                    if l.startswith("Cm")][0].split()[-1])
+        f_series = 1.0 / (2 * math.pi * math.sqrt(Lm * Cm))
+        mod = self._load_model()
+        self.assertLess(abs(f_series - mod.F_MODES[0]) / mod.F_MODES[0],
+                        0.01)
+
+    def test_veriloga_well_formed(self):
+        with open(self.art.files["rom_va"]) as f:
+            txt = f.read()
+        self.assertIn("module comb_resonator_rom", txt)
+        self.assertIn("endmodule", txt)
+        self.assertIn("DCDXD", txt)
+        self.assertEqual(txt.count("ddt(V(q"), 3)   # one per mode
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -292,6 +292,8 @@ class Elaborator:
         env: Dict[str, object] = {}
         insts: Dict[str, InstanceResult] = {}
         all_shapes: List[G.Shape] = []
+        self.device_ast = dev          # consumed by model reduction
+        self.device_env = env
 
         # first pass: params
         for it in dev.items:
