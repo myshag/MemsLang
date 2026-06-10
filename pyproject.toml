@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soidlc"
+version = "0.1.0"
+description = "Compiler from SOIDL (SOI MEMS device language) to 3D models"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+# Intentionally zero runtime dependencies: parser, geometry, 2.5D extrusion,
+# the software renderer and all exporters are pure standard-library Python.
+dependencies = []
+
+[project.scripts]
+soidlc = "soidlc.cli:main"
+
+[tool.setuptools]
+packages = ["soidlc"]

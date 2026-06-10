@@ -1,0 +1,37 @@
+// A simple in-plane accelerometer: a proof mass on two suspension beams,
+// with comb sense fingers and a routed metal bond pad.
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 1 um;   material = Au }
+    layer DEVICE { thickness = 25 um;  material = Si; E = 169 GPa; rho = 2330 kg/m^3 }
+    layer BOX    { thickness = 2 um;   material = SiO2 }
+    layer HANDLE { thickness = 400 um; material = Si }
+  }
+  rules {
+    release { hole_size = 6 um; hole_pitch = 30 um; max_solid_span = 40 um }
+  }
+}
+
+component suspension(L = 300 um, w = 5 um) {
+  mech port fixed, mass;
+  derive k = process.DEVICE.E * process.DEVICE.thickness * w^3 / L^3;
+  geometry {
+    beam(L, w, dir = x) at (0, 0);
+    anchor(24 um, 24 um) at (0 - L/2 - 12 um, 0);
+  }
+}
+
+device accel {
+  inst MASS = plate(400 um, 250 um) at (0, 0);
+  inst SUS  = array(suspension(L = 300 um, w = 5 um), count = 2,
+                    place = corners(MASS));
+  inst SENSE = combdrive(N = 30, Lf = 50 um) attach (rotor -> MASS.bottom);
+  inst PAD  = via_metal(120 um, 120 um) at (320 um, 180 um);
+
+  net SIG = SENSE.stator;
+  net GND = MASS | SUS.fixed;
+  isolate SIG from GND by trench;
+  constraint released(MASS, SUS);
+  constraint anchored(SUS.fixed);
+}

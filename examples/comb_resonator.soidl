@@ -1,0 +1,85 @@
+// A folded-flexure comb-drive resonator on a 25 um SOI process.
+// Compile:  python -m soidlc.cli examples/comb_resonator.soidl
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 0.52 um; material = Au }
+    layer DEVICE { thickness = 25 um;   material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3 }
+    layer BOX    { thickness = 2 um;    material = SiO2; eps_r = 3.9 }
+    layer HANDLE { thickness = 400 um;  material = Si }
+  }
+
+  masks {
+    mask SOID     -> etch(DEVICE, through)
+    mask TRENCH   -> etch(HANDLE, through, backside)
+    mask PADMETAL -> deposit(METAL)
+    mask OXIDE_RM -> etch(BOX, where = exposed)
+  }
+
+  rules {
+    release {
+      undercut       = 1.5 um
+      max_solid_span = 30 um
+      hole_size      = 5 um
+      hole_pitch     = 25 um
+    }
+    drie {
+      aspect_ratio_max = 20
+      footing_margin   = 1 um
+    }
+  }
+}
+
+component folded_flexure(L = 200 um, w = 4 um, n_folds = 2) {
+  mech port fixed, shuttle;
+
+  derive k.x = (2 * n_folds) * (process.DEVICE.E * process.DEVICE.thickness * w^3) / L^3;
+
+  geometry {
+    repeat i in 0..n_folds-1 {
+      beam(L, w, dir = y) at (i * (2*w + 8 um), 0);
+    }
+    // truss connecting the folds at the top
+    beam(2 * n_folds * w + 16 um, w, dir = x) at (n_folds*w, L/2);
+    anchor(20 um, 20 um) at (0, 0 - L/2 - 16 um);
+  }
+
+  check w >= 2 um;
+  check L/w <= 100 warn "very compliant beam, check buckling";
+}
+
+component combdrive(N = 24, g = 2 um, ov = 20 um, wf = 3 um, Lf = 40 um) {
+  mech port rotor;
+  elec port stator, rotor_el;
+
+  derive dCdx = N * 2 * eps0 * process.DEVICE.thickness / g;
+  derive F = 0.5 * dCdx;
+
+  geometry {
+    comb(N, Lf, wf, g, ov, dir = x) at (0, 0);
+  }
+}
+
+device comb_resonator {
+  param f0_target = 20 kHz;
+  param V_drive   = 30 V;
+
+  inst M  = plate(300 um, 300 um) at (0, 0);
+  inst S  = array(folded_flexure(L = 220 um, w = 4 um), count = 4,
+                  place = corners(M));
+  inst D1 = combdrive(N = 24) attach (rotor -> M.left);
+  inst D2 = combdrive(N = 24) attach (rotor -> M.right);
+
+  solve S.L such that f_res(M, S) == f0_target within 2%;
+
+  net DRIVE = D1.stator;
+  net SENSE = D2.stator;
+  net GND   = M | S.fixed;
+
+  isolate DRIVE from GND by trench;
+  constraint released(M, S);
+  constraint anchored(D1.stator, D2.stator, S.fixed);
+
+  check stroke_max(V_drive) >= 5 um;
+}
