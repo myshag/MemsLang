@@ -90,6 +90,7 @@ class EtchResult:
     tapers: List[float] = field(default_factory=list)   # deg, + = narrowing
     scallop_um: float = 0.0
     footing_um: float = 0.0
+    warnings: List[str] = field(default_factory=list)   # process warnings
 
     def report(self) -> List[str]:
         out = ["etch   Bosch level-set: %d x %d cells @ %.3f um, BOX at %.1f um"
@@ -115,12 +116,19 @@ def simulate(openings: List[Tuple[float, float]], domain_w: float,
              depth: float, dx: float = 0.15,
              recipe: Optional[BoschRecipe] = None,
              mask_thick: float = 2.0, box: bool = True,
-             box_at: Optional[float] = None) -> EtchResult:
+             box_at: Optional[float] = None,
+             process: Optional[object] = None) -> EtchResult:
     """Etch a set of mask ``openings`` (list of (x0, x1) in um) into a wafer.
 
     ``domain_w`` x ``depth`` is the simulated cross-section (um); the buried
-    oxide sits at ``box_at`` (default: just below the target depth).
+    oxide sits at ``box_at`` (default: just below the target depth).  Pass a
+    :class:`~soidlc.recipe_physics.BoschProcess` as ``process`` to drive the
+    etch from real machine parameters (step times, flows, pressure, powers)
+    instead of the effective ``recipe`` knobs.
     """
+    proc_warnings: List[str] = []
+    if process is not None:
+        recipe, proc_warnings = process.to_recipe()
     recipe = recipe or BoschRecipe()
     box_at = box_at if box_at is not None else depth
     z_extent = max(depth, box_at)
@@ -168,6 +176,7 @@ def simulate(openings: List[Tuple[float, float]], domain_w: float,
                            n_aniso, n_iso, dt)
 
     res = EtchResult(phi, nx, nz, dx, j_box, openings)
+    res.warnings = proc_warnings
     _measure(res, j0, mask_thick)
     return res
 
