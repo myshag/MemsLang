@@ -202,6 +202,28 @@ The pipeline mirrors the `soidlc` stages from the spec:
     reproduces the FEM mode-1 frequency to <0.01%, and the BVD series
     resonance matches by construction (both checked in tests).
 
+    **Noise / dynamic characteristics.** The same damping `b` that sets Q
+    also shakes the structure (fluctuation–dissipation: force PSD
+    `4·kB·T·b`), which makes the Brownian-limited **Angle Random Walk**
+    computable straight from the geometry:
+    `ARW = sqrt(2·kB·T·b)/(2·m·ω_d·X_d)` (IEEE-952 convention). It is a
+    spec-level metric — `require arw(300 K) <= 0.15;` (deg/√h, dimensionless
+    by convention) — and the generated ODE model ships a virtual rate-table
+    experiment: Langevin thermal forcing (`simulate_thermal`, validated by
+    equipartition `<x²> = kB·T/k` to ~1% in the demo), an overlapping
+    **Allan deviation** routine, and `arw_experiment()` whose τ^(−1/2) fit
+    reproduces the analytic ARW. With an output prefix the compiler also
+    writes `<prefix>_allan.png` — the Allan curve of the simulated run vs
+    the analytic slope:
+
+    ```
+    require arw(300 K) <= 0.15: ok (actual: 0.0333)
+    rom    ARW (Brownian, 300 K, x_d=7.54 um): 0.0355 deg/sqrt(h)
+    rom    Allan experiment: ARW_est=0.0355 deg/sqrt(h) vs analytic 0.0355
+    ```
+
+    ![allan](docs/comb_resonator_allan.png)
+
 12. With an output prefix, `--fem` also writes deformation pictures: a
     mode-shape panel (grey undeformed mesh + deformed mesh coloured by
     displacement magnitude) and an isometric render of the device deformed

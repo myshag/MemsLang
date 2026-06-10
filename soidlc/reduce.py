@@ -193,6 +193,15 @@ def build(elab, art, island_shapes: List[G.Shape], mesh: Mesh2D,
     Cm = (eta_d * eta_s) / k_eff
     f_series = 1.0 / (2 * math.pi * math.sqrt(Lm * Cm))
 
+    # Brownian-limited angle random walk (IEEE-952): the damping b also
+    # shakes the structure with force PSD 4*kB*T*b (fluctuation-dissipation)
+    KB = 1.380649e-23
+    T_REF = 300.0
+    x_drive = Q1 * (0.5 * drive.dcdx * v_dc ** 2) / k_eff
+    s_rate = 4 * KB * T_REF * b / (2 * m_eff * w[0] * x_drive) ** 2
+    arw_si = math.sqrt(s_rate / 2.0)            # rad/sqrt(s)
+    arw_deg = arw_si * (180.0 / math.pi) * 60.0  # deg/sqrt(h)
+
     for tr in tlist:
         art.report.append(
             f"rom    transducer {tr.name} (net {tr.net}): N={tr.N}, "
@@ -204,6 +213,9 @@ def build(elab, art, island_shapes: List[G.Shape], mesh: Mesh2D,
     art.report.append(
         f"rom    BVD @ V_dc={v_dc:g} V ({v_src}): Rm={Rm:.3e} ohm, "
         f"Lm={Lm:.3e} H, Cm={Cm:.3e} F, f_series={f_series / 1e3:.2f} kHz")
+    art.report.append(
+        f"rom    ARW (Brownian, {T_REF:g} K, x_d={x_drive * 1e6:.2f} um): "
+        f"{arw_deg:.4f} deg/sqrt(h)  ({arw_si:.3e} rad/sqrt(s))")
 
     if out_prefix:
         name = getattr(getattr(elab, "device_ast", None), "name", "device")
@@ -211,13 +223,35 @@ def build(elab, art, island_shapes: List[G.Shape], mesh: Mesh2D,
         cir = out_prefix + "_model.cir"
         va = out_prefix + "_model.va"
         _write_python(py, name, freqs, zetas, tlist, drive, sense, v_dc,
-                      m_eff, k_eff, Q1)
+                      m_eff, k_eff, Q1, b, x_drive)
         _write_spice(cir, name, Rm, Lm, Cm, drive, sense, v_dc, f_series)
         _write_veriloga(va, name, freqs, zetas, tlist, drive, sense, v_dc)
         art.files["rom_py"] = py
         art.files["rom_cir"] = cir
         art.files["rom_va"] = va
         art.report.append(f"rom    files: {py}, {cir}, {va}")
+        _plot_allan(art, py, out_prefix)
+
+
+def _plot_allan(art, model_path: str, out_prefix: str) -> None:
+    """Run the generated model's virtual rate-table experiment and plot the
+    Allan deviation curve (simulated points vs the analytic ARW slope)."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_rom_tmp", model_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        pts, est = mod.arw_experiment(n=120000, dt=1e-3, seed=2)
+        from . import femplot
+        path = out_prefix + "_allan.png"
+        femplot.plot_allan(pts, mod.ARW_RADS, est, path)
+        art.files["rom_allan"] = path
+        art.report.append(
+            f"rom    Allan experiment: ARW_est={est * 3437.75:.4f} "
+            f"deg/sqrt(h) vs analytic "
+            f"{mod.ARW_RADS * 3437.75:.4f} -> {path}")
+    except Exception as e:  # noqa: BLE001 - plotting is best-effort
+        art.warnings.append(f"rom: allan plot failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +363,94 @@ def estimate_resonance():
     return (crossings - 1) / (t_last - t_first)
 
 
+KB = 1.380649e-23
+T_REF = 300.0
+
+
+def equivalent_rate_psd(T=T_REF):
+    """One-sided PSD of the thermal-equivalent input rate, (rad/s)^2/Hz.
+
+    Fluctuation-dissipation: force PSD 4*kB*T*B_TOTAL referred through the
+    Coriolis scale factor 2*M_EFF*w_drive*X_DRIVE.
+    """
+    sf = 2.0 * M_EFF * (2.0 * math.pi * F_MODES[0]) * X_DRIVE
+    return 4.0 * KB * T * B_TOTAL / (sf * sf)
+
+
+def arw(T=T_REF):
+    """Angle random walk, rad/sqrt(s) (IEEE-952: sigma(tau)=ARW/sqrt(tau))."""
+    return math.sqrt(equivalent_rate_psd(T) / 2.0)
+
+
+def allan_deviation(y, dt, ms=None):
+    """Overlapping Allan deviation of a rate record. -> [(tau, sigma)]."""
+    n = len(y)
+    if ms is None:
+        ms, m = [], 1
+        while m <= n // 10:
+            ms.append(m)
+            m *= 2
+    th = [0.0] * (n + 1)            # cumulative angle
+    for i, v in enumerate(y):
+        th[i + 1] = th[i] + v * dt
+    out = []
+    for m in ms:
+        tau = m * dt
+        cnt = n - 2 * m + 1
+        s = 0.0
+        for k in range(cnt):
+            d = th[k + 2 * m] - 2.0 * th[k + m] + th[k]
+            s += d * d
+        out.append((tau, math.sqrt(s / (2.0 * tau * tau * cnt))))
+    return out
+
+
+def arw_experiment(T=T_REF, n=200000, dt=1e-3, seed=2):
+    """Virtual rate-table run at Omega = 0: the gyro output is pure
+    thermal-equivalent rate noise; its Allan deviation follows
+    sigma(tau) = ARW/sqrt(tau).  Returns ([(tau, sigma)], arw_estimate)."""
+    import random
+    rng = random.Random(seed)
+    sig = math.sqrt(equivalent_rate_psd(T) / (2.0 * dt))
+    y = [rng.gauss(0.0, sig) for _ in range(n)]
+    pts = allan_deviation(y, dt)
+    est = sum(s * math.sqrt(t) for t, s in pts[:4]) / 4.0
+    return pts, est
+
+
+def thermal_x_rms(T=T_REF):
+    """Equipartition: expected RMS thermal displacement, sqrt(kB*T/k)."""
+    return math.sqrt(KB * T / K_EFF)
+
+
+def simulate_thermal(t_end, T=T_REF, dt=None, seed=1, n_modes=None):
+    """Langevin integration (semi-implicit Euler) under thermal force only.
+    The modal damping and the thermal forcing are tied by the
+    fluctuation-dissipation theorem, so equipartition holds:
+    <x^2> -> kB*T/K_EFF.  Returns (dt, x_samples) at the drive point."""
+    import random
+    nm = n_modes or len(F_MODES)
+    if dt is None:
+        dt = 1.0 / (40.0 * max(F_MODES[:nm]))
+    rng = random.Random(seed)
+    sig_f = math.sqrt(2.0 * KB * T * B_TOTAL / dt)
+    ud = PORTS[DRIVE_PORT]["u"]
+    state = [0.0] * (2 * nm)
+    xs = []
+    for _ in range(int(t_end / dt)):
+        fth = rng.gauss(0.0, sig_f)
+        for i in range(nm):
+            w = 2.0 * math.pi * F_MODES[i]
+            v = state[2 * i + 1] + (
+                -w * w * state[2 * i]
+                - 2.0 * ZETA[i] * w * state[2 * i + 1]
+                + ud[i] * fth) * dt
+            state[2 * i + 1] = v
+            state[2 * i] += v * dt
+        xs.append(sum(ud[i] * state[2 * i] for i in range(nm)))
+    return dt, xs
+
+
 if __name__ == "__main__":
     f_est = estimate_resonance()
     print("ring-down resonance : %.1f Hz  (modal f1 = %.1f Hz)"
@@ -337,13 +459,25 @@ if __name__ == "__main__":
     print("peak |x_sense/F|    : %.3e m/N  (Q*static)" % H)
     print("static sense defl.  : %.3e m at V_dc" % (
         abs(freq_response(1.0)) * force(DRIVE_PORT, V_DC)))
+    print("ARW analytic        : %.4f deg/sqrt(h)"
+          % (arw() * (180.0 / math.pi) * 60.0))
+    _pts, _est = arw_experiment(n=100000)
+    print("ARW from Allan exp. : %.4f deg/sqrt(h)"
+          % (_est * (180.0 / math.pi) * 60.0))
+    _dt, _xs = simulate_thermal(0.25, n_modes=1, seed=3)
+    _rms = math.sqrt(sum(x * x for x in _xs) / len(_xs))
+    print("thermal x_rms       : %.2e m (equipartition: %.2e m)"
+          % (_rms, thermal_x_rms()))
 '''
 
 
 def _write_python(path, name, freqs, zetas, tlist, drive, sense, v_dc,
-                  m_eff, k_eff, Q1):
+                  m_eff, k_eff, Q1, b_total, x_drive):
     ports = {tr.net: {"dcdx": tr.dcdx, "C0": tr.C0, "u": list(tr.u)}
              for tr in tlist}
+    arw_si = math.sqrt(4 * 1.380649e-23 * 300.0 * b_total
+                       / (2 * m_eff * 2 * math.pi * freqs[0] * x_drive) ** 2
+                       / 2.0)
     head = (
         f'"""Reduced-order model of `{name}` — generated by soidlc.\n\n'
         f'Modal superposition of the lowest {len(freqs)} FEM modes; '
@@ -356,7 +490,10 @@ def _write_python(path, name, freqs, zetas, tlist, drive, sense, v_dc,
         f"DRIVE_PORT = {drive.net!r}\n"
         f"SENSE_PORT = {sense.net!r}\n"
         f"V_DC = {v_dc!r}\n"
-        f"M_EFF = {m_eff!r}\nK_EFF = {k_eff!r}\nQ1 = {Q1!r}\n")
+        f"M_EFF = {m_eff!r}\nK_EFF = {k_eff!r}\nQ1 = {Q1!r}\n"
+        f"B_TOTAL = {b_total!r}     # total gas damping, N*s/m\n"
+        f"X_DRIVE = {x_drive!r}     # resonant drive amplitude at V_DC, m\n"
+        f"ARW_RADS = {arw_si!r}     # analytic ARW @300K, rad/sqrt(s)\n")
     with open(path, "w") as f:
         f.write(head + _PY_BODY)
 

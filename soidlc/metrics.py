@@ -16,6 +16,7 @@ from typing import Dict, List
 from .units import Quantity
 
 MU_AIR = 1.85e-5
+KB = 1.380649e-23
 
 
 class MetricError(Exception):
@@ -93,11 +94,47 @@ def build_env(elab, res) -> Dict[str, object]:
         x0, y0, x1, y1 = res.bbox
         return _q((x1 - x0) * (y1 - y0) * 1e-12, (2, 0, 0, 0))
 
+    def _drive_voltage() -> float:
+        q = env.get("V_drive")
+        if isinstance(q, Quantity) and q.dim == (2, 1, -3, -1):
+            return q.value
+        for v in env.values():
+            if isinstance(v, Quantity) and v.dim == (2, 1, -3, -1):
+                return v.value
+        return 1.0
+
+    def arw(T=None, *_a, **_k) -> Quantity:
+        """Brownian-limited angle random walk, returned as a dimensionless
+        number in deg/sqrt(hour) (IEEE-952 convention: sigma_Allan(tau) =
+        ARW/sqrt(tau)).
+
+        Fluctuation-dissipation: the gas that damps the structure (b) also
+        shakes it with force PSD 4*kB*T*b, indistinguishable from the
+        Coriolis force 2*m*Omega*x_drive'.
+        """
+        if drive is None:
+            raise MetricError("arw: no comb transducer found")
+        Tv = (T.value if isinstance(T, Quantity)
+              else float(T) if T is not None else 300.0)
+        m = _model_q("m", "ARW").value
+        k = _model_q("k", "ARW").value
+        f0 = _model_q("f0", "ARW").value
+        w = 2 * math.pi * f0
+        b = _damping()
+        V = _drive_voltage()
+        F = 0.5 * drive.dcdx * V * V
+        Q = w * m / b
+        x_d = Q * F / k                         # resonant drive amplitude
+        s_rate = 4 * KB * Tv * b / (2 * m * w * x_d) ** 2   # (rad/s)^2/Hz
+        arw_si = math.sqrt(s_rate / 2.0)        # rad/sqrt(s), IEEE-952
+        return _q(arw_si * (180.0 / math.pi) * 60.0, (0, 0, 0, 0))
+
     env.update({
         "f_res": f_res,
         "Q_estimate": q_estimate,
         "stroke_max": stroke_max,
         "stroke_static": stroke_static,
         "area": area,
+        "arw": arw,
     })
     return env

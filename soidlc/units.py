@@ -230,6 +230,9 @@ _BASE_UNITS: Dict[str, Tuple[float, Dim]] = {
     # special dimensionless / per-square markers
     "sq": (1.0, DIMLESS),
     "rad": (1.0, DIMLESS),
+    # temperature carries no dimension vector of its own in v0.1: kelvin
+    # values flow into metric functions (e.g. arw(300 K)) as plain numbers
+    "K": (1.0, DIMLESS),
 }
 
 

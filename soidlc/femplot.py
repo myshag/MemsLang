@@ -63,6 +63,26 @@ _FONT = {
     "9": (0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100),
     ".": (0, 0, 0, 0, 0, 0b01100, 0b01100),
     " ": (0, 0, 0, 0, 0, 0, 0),
+    "A": (0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001),
+    "B": (0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110),
+    "C": (0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110),
+    "F": (0b11111, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000, 0b10000),
+    "G": (0b01110, 0b10001, 0b10000, 0b10011, 0b10001, 0b10001, 0b01110),
+    "I": (0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110),
+    "L": (0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111),
+    "N": (0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001),
+    "P": (0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000),
+    "Q": (0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101),
+    "R": (0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001),
+    "S": (0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110),
+    "T": (0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100),
+    "U": (0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110),
+    "V": (0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100),
+    "W": (0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001),
+    "X": (0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001),
+    "Y": (0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100),
+    "-": (0, 0, 0, 0b01110, 0, 0, 0),
+    "/": (0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000),
 }
 
 
@@ -195,6 +215,70 @@ def plot_modes(mesh: Mesh2D, freqs: List[float], vectors: List[List[float]],
         _text(img, W, H, k * pw + m, ph - label_h + 4,
               f"MODE {k + 1}  {f / 1e3:.2f} KHZ", TEXT, scale=2)
 
+    write_png(path, W, H, img)
+
+
+# ---------------------------------------------------------------------------
+# Allan deviation plot (log-log)
+# ---------------------------------------------------------------------------
+def plot_allan(pts, arw_analytic: float, arw_est: float, path: str,
+               size: Tuple[int, int] = (640, 480)) -> None:
+    """Simulated Allan deviation points vs the analytic ARW/sqrt(tau) line.
+
+    ``pts`` is [(tau_s, sigma_rad_per_s)]; ARW values in rad/sqrt(s).
+    """
+    W, H = size
+    img = bytearray(BG * (W * H))
+    ml, mr, mt, mb = 64, 20, 38, 46          # margins
+
+    taus = [t for t, _ in pts]
+    sigs = [s for _, s in pts]
+    lx0 = math.floor(math.log10(min(taus)))
+    lx1 = math.ceil(math.log10(max(taus)))
+    ana = [arw_analytic / math.sqrt(t) for t in taus]
+    ymin = min(min(sigs), min(ana))
+    ymax = max(max(sigs), max(ana))
+    ly0 = math.floor(math.log10(ymin))
+    ly1 = math.ceil(math.log10(ymax))
+
+    def tx(t):
+        return ml + (math.log10(t) - lx0) / max(lx1 - lx0, 1) * (W - ml - mr)
+
+    def ty(s):
+        return H - mb - (math.log10(s) - ly0) / max(ly1 - ly0, 1) \
+            * (H - mt - mb)
+
+    # decade grid + tick labels
+    grid = (44, 44, 54)
+    for d in range(lx0, lx1 + 1):
+        x = tx(10.0 ** d)
+        _line(img, W, H, x, mt, x, H - mb, grid)
+        _text(img, W, H, int(x) - 14, H - mb + 8, f"1E{d}", TEXT, 1)
+    for d in range(ly0, ly1 + 1):
+        y = ty(10.0 ** d)
+        _line(img, W, H, ml, y, W - mr, y, grid)
+        _text(img, W, H, 8, int(y) - 4, f"1E{d}", TEXT, 1)
+
+    # analytic ARW/sqrt(tau) line
+    line_c = (110, 110, 125)
+    for (t0, s0), (t1, s1) in zip(list(zip(taus, ana)), list(zip(taus, ana))[1:]):
+        _line(img, W, H, tx(t0), ty(s0), tx(t1), ty(s1), line_c)
+
+    # simulated points (3x3 squares, colour-mapped)
+    for t, s in pts:
+        px, py = int(tx(t)), int(ty(s))
+        for dy in range(-1, 2):
+            for dx in range(-1, 2):
+                x, y = px + dx, py + dy
+                if 0 <= x < W and 0 <= y < H:
+                    o = (y * W + x) * 3
+                    img[o:o + 3] = bytes((240, 170, 60))
+
+    deg = 180.0 / math.pi * 60.0
+    _text(img, W, H, ml, 8, "ALLAN DEVIATION RAD/S VS TAU S", TEXT, 2)
+    _text(img, W, H, ml, H - 18,
+          f"ARW {arw_est * deg:.4f} DEG/RT-H  ANALYTIC "
+          f"{arw_analytic * deg:.4f}", (240, 170, 60), 1)
     write_png(path, W, H, img)
 
 

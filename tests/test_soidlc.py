@@ -187,7 +187,7 @@ class TestClosure(unittest.TestCase):
         self.assertTrue(any("S.L" in l for l in solved))
         self.assertTrue(any("D1.N" in l for l in solved))
         ok = [l for l in art.report if l.startswith("require") and ": ok" in l]
-        self.assertEqual(len(ok), 2, art.report)
+        self.assertEqual(len(ok), 3, art.report)
 
     def test_violated_require_is_an_error(self):
         src = """
@@ -358,6 +358,36 @@ class TestROM(unittest.TestCase):
         mod = self._load_model()
         self.assertLess(abs(f_series - mod.F_MODES[0]) / mod.F_MODES[0],
                         0.01)
+
+    def test_arw_in_require_and_report(self):
+        ok = [l for l in self.art.report
+              if l.startswith("require arw") and ": ok" in l]
+        self.assertTrue(ok, self.art.report)
+        rom = [l for l in self.art.report if "ARW (Brownian" in l]
+        self.assertTrue(rom, self.art.report)
+        # parse the deg/sqrt(h) value: plausible MEMS range in air
+        val = float(rom[0].split(":")[1].split("deg")[0])
+        self.assertGreater(val, 1e-3)
+        self.assertLess(val, 1.0)
+
+    def test_allan_experiment_matches_analytic_arw(self):
+        mod = self._load_model()
+        pts, est = mod.arw_experiment(n=60000, dt=1e-3, seed=4)
+        self.assertLess(abs(est - mod.ARW_RADS) / mod.ARW_RADS, 0.15,
+                        (est, mod.ARW_RADS))
+        # white noise: sigma(tau) ~ tau^-1/2 over the first decades
+        (t0, s0), (t1, s1) = pts[0], pts[6]
+        slope = math.log(s1 / s0) / math.log(t1 / t0)
+        self.assertLess(abs(slope + 0.5), 0.1, slope)
+
+    def test_thermal_equipartition(self):
+        # Langevin forcing and damping must satisfy <x^2> = kB*T/k
+        mod = self._load_model()
+        dt, xs = mod.simulate_thermal(0.2, n_modes=1, seed=5)
+        rms = math.sqrt(sum(x * x for x in xs) / len(xs))
+        expected = mod.thermal_x_rms()
+        self.assertLess(abs(rms - expected) / expected, 0.5,
+                        (rms, expected))
 
     def test_veriloga_well_formed(self):
         with open(self.art.files["rom_va"]) as f:

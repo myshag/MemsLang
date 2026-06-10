@@ -85,6 +85,7 @@ device comb_resonator {
 
   require stroke_max(V_drive) >= 5 um;
   require f_res(M, S) >= 15 kHz;
+  require arw(300 K) <= 0.15;        // deg/sqrt(h), Brownian limit in air
 
   net DRIVE = D1.stator;
   net SENSE = D2.stator;
