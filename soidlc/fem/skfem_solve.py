@@ -134,6 +134,11 @@ def _clamped_dof_array(vec_basis: Basis, mesh: FemMesh) -> np.ndarray:
 def _build_p1_mass(mesh: FemMesh, rho: float, t: float) -> Tuple[Basis, object]:
     """Build the P1 vector mass matrix for vertex-space M-normalisation.
 
+    The mass matrix includes the out-of-plane thickness ``t`` so that the
+    resulting M-normalised mode vectors carry physical units (m / sqrt(kg)).
+    This makes the effective-mass formula ``m_eff = 1 / u_drive^2`` in the
+    ROM consistent with the physical device mass.
+
     Returns (p1_vec_basis, M1) where M1 includes lumped extra_mass.
     """
     p = np.array(mesh.nodes, dtype=float).T * UM
@@ -150,7 +155,8 @@ def _build_p1_mass(mesh: FemMesh, rho: float, t: float) -> Tuple[Basis, object]:
 
     @BilinearForm
     def mass_form(u, v, w):
-        return rho * w["f"] * dot(u, v)
+        # rho [kg/m^3] * t [m] * fill * N·N gives units kg after 2-D integration
+        return rho * t * w["f"] * dot(u, v)
 
     M1 = mass_form.assemble(p1_vec_basis, f=f_interp)
 

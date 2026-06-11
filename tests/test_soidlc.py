@@ -248,41 +248,43 @@ class TestClosure(unittest.TestCase):
 
 
 class TestFEM(unittest.TestCase):
-    """Validate the built-in plane-stress solver against beam theory."""
+    """Validate the scikit-fem plane-stress solver against beam theory."""
 
     E, NU, RHO, T = 169e9, 0.22, 2330.0, 25e-6
     L_UM, H_UM = 100.0, 10.0
 
     def _cantilever(self, h):
-        from soidlc import fem2d
+        from soidlc import fem
         shapes = [
             G.Shape("DEVICE", G.rect_corner(-20, 0, 20, self.H_UM),
                     "anchor", "anchored"),
             G.Shape("DEVICE", G.rect_corner(0, 0, self.L_UM, self.H_UM),
                     "beam", "released"),
         ]
-        return fem2d.build_mesh(shapes, h)
+        return fem.build_mesh(shapes, h)
 
     def test_cantilever_static_deflection(self):
-        from soidlc import fem2d
+        from soidlc import fem
         mesh = self._cantilever(2.5)
         tip = [n for n, (x, y) in enumerate(mesh.nodes)
-               if abs(x - self.L_UM) < 1e-6 and n not in mesh.fixed]
-        self.assertTrue(tip)
-        F = 1e-6                                  # 1 uN, shared by tip nodes
-        loads = {n: (0.0, F / len(tip)) for n in tip}
-        u = fem2d.static_solve(mesh, self.E, self.NU, self.T, loads)
+               if abs(float(x) - self.L_UM) < 1e-4 and n not in mesh.fixed]
+        self.assertTrue(tip, "no free tip nodes found")
+        # static_solve forces are N/m (per unit thickness).
+        # Apply 1 N/m (total) shared across tip nodes.
+        F_per_t = 1.0          # N/m — line force per unit thickness
+        loads = {n: (0.0, F_per_t / len(tip)) for n in tip}
+        u = fem.static_solve(mesh, self.E, self.NU, self.T, loads)
         dy = sum(u[n][1] for n in tip) / len(tip)
         L, hgt = self.L_UM * 1e-6, self.H_UM * 1e-6
-        I = self.T * hgt ** 3 / 12.0
-        euler = F * L ** 3 / (3.0 * self.E * I)
+        I = hgt ** 3 / 12.0            # per-unit-thickness area moment
+        euler = F_per_t * L ** 3 / (3.0 * self.E * I)
         self.assertLess(abs(dy - euler) / euler, 0.12,
                         f"FEM {dy:.3e} vs Euler {euler:.3e}")
 
     def test_cantilever_first_mode(self):
-        from soidlc import fem2d
+        from soidlc import fem
         mesh = self._cantilever(2.5)
-        f = fem2d.modal(mesh, self.E, self.NU, self.RHO, self.T, n_modes=1)
+        f, _, _ = fem.modal(mesh, self.E, self.NU, self.RHO, self.T, n_modes=1)
         self.assertTrue(f)
         L, hgt = self.L_UM * 1e-6, self.H_UM * 1e-6
         I = self.T * hgt ** 3 / 12.0

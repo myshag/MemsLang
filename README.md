@@ -12,9 +12,9 @@ per-layer 2D geometry, and **extrudes the layer stack into a watertight 2.5D
 3D mesh**, which it exports as STL and OBJ/MTL plus an SVG top-view and a
 rendered PNG preview.
 
-It is **pure standard-library Python — zero dependencies** (the parser,
-geometry kernel, mesh extruder, software renderer and all exporters are
-hand-written).
+The core compiler (parser, geometry kernel, 2.5D extruder, software renderer
+and exporters) is pure standard-library Python. The FEM layer (`--fem` /
+`--fem-closure`) additionally uses **scikit-fem** and **gmsh**.
 
 | comb resonator | in-plane accelerometer |
 | --- | --- |
@@ -48,7 +48,7 @@ report  : derive/check/solve results with evaluated values
 
 CLI flags: `-o/--out <prefix>`, `-d/--device <name>` (which device to build),
 `--no-handle` (omit the substrate slab), `--fem` / `--fem-h <um>` (run the
-built-in 2D plane-stress modal FEM), `--fem-closure` (FEM-in-the-loop design
+scikit-fem plane-stress modal FEM), `--fem-closure` (FEM-in-the-loop design
 closure), `-q/--quiet`.
 
 ## How it works
