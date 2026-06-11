@@ -7,3 +7,5 @@ out/
 *.egg-info/
 .DS_Store
 poc_elmer/
+node_modules/
+webapp/frontend/dist/
