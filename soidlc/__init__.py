@@ -29,6 +29,7 @@ class Artifacts:
     errors: List[str] = field(default_factory=list)
     files: Dict[str, str] = field(default_factory=dict)
     model: Dict[str, object] = field(default_factory=dict)
+    elab: object = None
 
 
 def compile_source(src: str, device: Optional[str] = None,
@@ -49,6 +50,7 @@ def compile_source(src: str, device: Optional[str] = None,
 
     art = Artifacts(elab.process, result, mesh, elab.report, elab.warnings,
                     elab.errors, model=result.model)
+    art.elab = elab
     closure.enforce_requires(elab, art, device)
 
     if out_prefix:

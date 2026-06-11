@@ -52,7 +52,8 @@ def main(argv=None) -> int:
     if args.web:
         import json
         from . import webbundle
-        bundle = webbundle.build_bundle(args.input, n_modes=3)
+        bundle = webbundle.build_bundle_from_compiled(
+            art.elab, art.result, art.mesh, n_modes=3)
         with open(args.web, "w") as f:
             json.dump(bundle, f)
         if not args.quiet:

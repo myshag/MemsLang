@@ -56,3 +56,16 @@ def test_bundle_static_case():
     st = [r for r in b["results"] if r["type"] == "static"]
     assert len(st) == 1 and st[0]["animate"] is False
     assert len(st[0]["disp"]) == len(b["geometry"]["positions"])
+
+
+def test_static_layers_have_zero_disp():
+    b = build_bundle("examples/comb_resonator.soidl", n_modes=1)
+    g, meta = b["geometry"], b["meta"]
+    names = [l["name"] for l in meta["layers"]]
+    r = b["results"][0]
+    bad = 0
+    for v in range(len(g["vertexLayer"])):
+        if names[g["vertexLayer"][v]] in ("BOX", "HANDLE"):
+            if abs(r["disp"][3*v]) > 0 or abs(r["disp"][3*v+1]) > 0:
+                bad += 1
+    assert bad == 0
