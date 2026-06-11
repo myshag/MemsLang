@@ -37,7 +37,9 @@ export default function DeformableMesh({ geometry, result, settings }) {
         pos[k] = base[k]; pos[k+1] = base[k+1]; pos[k+2] = base[k+2]
       }
       let c = layerColor[v]
-      if (disp && mag && mag[v] > 1e-6) c = viridis(mag[v] * Math.abs(amp))
+      // contour is time-independent (shows the mode's pattern);
+      // only the geometry oscillates
+      if (disp && mag && mag[v] > 1e-6) c = viridis(mag[v])
       col[k] = c[0]; col[k+1] = c[1]; col[k+2] = c[2]
     }
     geom.attributes.position.needsUpdate = true

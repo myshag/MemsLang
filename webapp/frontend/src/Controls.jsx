@@ -9,6 +9,11 @@ export default function Controls({ settings, set, result }) {
     <label>speed {settings.speed}
       <input type="range" min="0" max="5" step="0.1" value={settings.speed} onChange={f('speed')}/></label>
     <label><input type="checkbox" checked={settings.wireframe} onChange={b('wireframe')}/> wireframe</label>
-    {result && <span>dmax = {result.dmax_um?.toExponential(2)} um</span>}
+    {/* mode shapes have arbitrary amplitude (M-normalised) — a um readout
+        only makes sense for static load cases */}
+    {result && result.type === 'static' &&
+      <span>dmax = {result.dmax_um?.toExponential(2)} um</span>}
+    {result && result.freq_hz &&
+      <span>f = {(result.freq_hz / 1e3).toFixed(2)} kHz</span>}
   </div>
 }

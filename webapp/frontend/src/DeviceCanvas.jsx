@@ -4,14 +4,17 @@ import { OrbitControls, Bounds } from '@react-three/drei'
 import DeformableMesh from './DeformableMesh.jsx'
 
 export default function DeviceCanvas({ bundle, result, settings }) {
-  return <Canvas camera={{ position: [400, 400, 600], far: 100000 }}
+  return <Canvas camera={{ position: [350, 700, 450], far: 100000 }}
                  style={{ background: '#0b0d12' }}>
     <ambientLight intensity={0.6}/>
     <directionalLight position={[1, 2, 3]} intensity={1.0}/>
     <directionalLight position={[-2, -1, -1]} intensity={0.3}/>
     <Bounds fit clip observe margin={1.2}>
-      <DeformableMesh geometry={bundle.geometry} result={result}
-        settings={{ ...settings, layers: bundle.meta.layers }}/>
+      {/* soidlc is Z-up (wafer normal = +z); three.js is Y-up */}
+      <group rotation={[-Math.PI / 2, 0, 0]}>
+        <DeformableMesh geometry={bundle.geometry} result={result}
+          settings={{ ...settings, layers: bundle.meta.layers }}/>
+      </group>
     </Bounds>
     <OrbitControls makeDefault/>
   </Canvas>
