@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import DeviceCanvas from './DeviceCanvas.jsx'
 import ResultPanel from './ResultPanel.jsx'
 import Controls from './Controls.jsx'
 import ExampleSelector from './ExampleSelector.jsx'
+import EditorPanel from './EditorPanel.jsx'
 
 const DEFAULTS = { scale: 40, speed: 1.5, wireframe: false, colorField: 'disp_mag' }
 
@@ -14,6 +15,9 @@ export default function App() {
   const [error, setError] = useState(null)
   const [active, setActive] = useState(-1)
   const [settings, setSettings] = useState(DEFAULTS)
+  const [showEditor, setShowEditor] = useState(false)
+
+  const handleBundle = useCallback((b) => { setBundle(b); setActive(-1) }, [])
 
   // retry the examples fetch until the backend is reachable (it may still
   // be starting up), and surface the failure instead of an empty selector
@@ -46,14 +50,18 @@ export default function App() {
     <div style={{display:'flex', gap:16, alignItems:'center', padding:8}}>
       <strong>soidlc viewer</strong>
       <ExampleSelector examples={examples} value={name} onChange={setName}/>
+      <button onClick={() => setShowEditor(s => !s)}>{showEditor ? 'hide editor' : 'editor'}</button>
       {loading && <span>compiling…</span>}
       {error && <span style={{color:'#f66'}}>{error}</span>}
     </div>
-    <div style={{display:'grid', gridTemplateColumns:'240px 1fr', minHeight:0}}>
+    <div style={{display:'grid', gridTemplateColumns: showEditor ? '240px minmax(280px, 1fr) 2fr' : '240px 1fr', minHeight:0}}>
       <div style={{padding:8, overflow:'auto'}}>
         {bundle && <ResultPanel results={bundle.results} active={active} onSelect={setActive}/>}
         {bundle && <Legend layers={bundle.meta.layers}/>}
       </div>
+      {showEditor && <div style={{minHeight:0, padding:'0 8px'}}>
+        <EditorPanel name={name} onBundle={handleBundle}/>
+      </div>}
       <div style={{minHeight:0}}>
         {bundle && <DeviceCanvas bundle={bundle} result={result} settings={settings}/>}
       </div>
