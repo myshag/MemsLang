@@ -35,3 +35,42 @@ def test_femresult_basic():
     r = FemResult(freqs=[1.0e3], vecs=[[0.1, 0.2]], dof_of={0: 0})
     assert r.freqs[0] == 1.0e3
     assert r.dof_of[0] == 0
+
+
+def test_mesh_union_is_connected():
+    a = _rect_shape(0.0, 0.0, 50.0, 10.0)
+    b = _rect_shape(40.0, 0.0, 50.0, 10.0)   # overlaps a
+    m = mesh_build.build_mesh([a, b], h=4.0)
+    # one connected component: BFS over cell adjacency reaches every used node
+    from collections import defaultdict
+    adj = defaultdict(set)
+    for (i, j, k) in m.cells:
+        for u in (i, j, k):
+            for v in (i, j, k):
+                adj[u].add(v)
+    seen, stack = set(), [m.cells[0][0]]
+    while stack:
+        u = stack.pop()
+        if u in seen:
+            continue
+        seen.add(u)
+        stack.extend(adj[u] - seen)
+    used = {n for c in m.cells for n in c}
+    assert seen == used                      # fully connected
+
+
+def test_mesh_anchored_marks_fixed():
+    body = _rect_shape(0.0, 0.0, 100.0, 10.0)
+    anchor = _rect_shape(0.0, 0.0, 5.0, 10.0, mech="anchored")
+    m = mesh_build.build_mesh([body, anchor], h=3.0)
+    assert len(m.fixed) > 0
+    assert all(m.nodes[n][0] <= 5.5 for n in m.fixed)
+
+
+def test_mesh_fingers_lumped_not_meshed():
+    body = _rect_shape(0.0, 0.0, 100.0, 10.0)
+    finger = _rect_shape(20.0, 10.0, 2.0, 8.0, label="rotor_finger")
+    m = mesh_build.build_mesh([body, finger], h=3.0)
+    assert len(m.extra_mass) == 1
+    # finger tip y=18 is not in the meshed body (height 10)
+    assert max(p[1] for p in m.nodes) <= 10.5
