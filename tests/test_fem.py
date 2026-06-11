@@ -1,6 +1,9 @@
+import math
+
 from soidlc.fem.result import FemMesh, FemResult
 from soidlc import geometry as G
 from soidlc.fem import mesh_build
+from soidlc.fem import skfem_solve
 
 
 def _rect_shape(x0, y0, w, h, **kw):
@@ -74,3 +77,23 @@ def test_mesh_fingers_lumped_not_meshed():
     assert len(m.extra_mass) == 1
     # finger tip y=18 is not in the meshed body (height 10)
     assert max(p[1] for p in m.nodes) <= 10.5
+
+
+def test_modal_cantilever_matches_euler():
+    # clamped silicon beam L=100um H=10um; in-plane bending mode 1
+    body = _rect_shape(0.0, 0.0, 100.0, 10.0)
+    anchor = _rect_shape(0.0, 0.0, 2.0, 10.0, mech="anchored")
+    m = mesh_build.build_mesh([body, anchor], h=2.0)
+    E, nu, rho, t = 170.0e9, 0.28, 2330.0, 10.0e-6
+    freqs, vecs, dof_of = skfem_solve.modal(m, E, nu, rho, t, n_modes=3)
+
+    L, H = 100e-6, 10e-6
+    I = (H ** 3) / 12.0
+    A = H
+    f1 = (1.8751 ** 2) / (2 * math.pi) * math.sqrt(E * I / (rho * A * L ** 4))
+    assert abs(freqs[0] - f1) / f1 < 0.05          # within 5%
+    assert len(vecs) == 3 and len(dof_of) == len(m.nodes)
+    # a free tip node has nonzero displacement in mode 1
+    tip = max(range(len(m.nodes)), key=lambda n: m.nodes[n][0])
+    b = dof_of[tip]
+    assert b >= 0 and abs(vecs[0][b + 1]) > 0.0
