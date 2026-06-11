@@ -15,7 +15,22 @@ export default function App() {
   const [active, setActive] = useState(-1)
   const [settings, setSettings] = useState(DEFAULTS)
 
-  useEffect(() => { fetch('/api/examples').then(r => r.json()).then(setExamples) }, [])
+  // retry the examples fetch until the backend is reachable (it may still
+  // be starting up), and surface the failure instead of an empty selector
+  useEffect(() => {
+    let stop = false
+    const load = (attempt = 0) =>
+      fetch('/api/examples')
+        .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+        .then(list => { if (!stop) { setExamples(list); setError(null) } })
+        .catch(() => {
+          if (stop) return
+          setError('backend unreachable — retrying…')
+          setTimeout(() => load(attempt + 1), Math.min(2000 * (attempt + 1), 10000))
+        })
+    load()
+    return () => { stop = true }
+  }, [])
   useEffect(() => {
     if (!name) return
     setBundle(null); setActive(-1); setLoading(true); setError(null)
