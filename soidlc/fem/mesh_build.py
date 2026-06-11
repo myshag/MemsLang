@@ -96,7 +96,9 @@ def build_mesh(shapes: List[G.Shape], h: float,
     if not solids:
         return mesh
 
-    gmsh.initialize()
+    # interruptible=False: skip gmsh's SIGINT handler so meshing works in
+    # non-main threads (e.g. the web backend's request workers)
+    gmsh.initialize(interruptible=False)
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         gmsh.model.add("island")
