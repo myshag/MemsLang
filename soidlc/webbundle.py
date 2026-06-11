@@ -17,16 +17,36 @@ from .elaborate import Elaborator
 _STATIC_LAYERS = frozenset(("BOX", "HANDLE"))
 
 
-def _compile(path: str):
-    """Elaborate a .soidl file and build its 3D mesh; return (elab, result, mesh)."""
-    with open(path) as f:
-        ast = parse(f.read())
+def _compile_source(src: str):
+    """Elaborate SOIDL source text and build its 3D mesh; return (elab, result, mesh)."""
+    ast = parse(src)
     elab = Elaborator(ast)
     from . import closure
     overrides = closure.run(elab, None, fem_calibrate=False, fem_h=20.0)
     result = elab.elaborate_device(None, overrides=overrides)
     mesh = build3d.build_mesh(result, elab.process, include_handle=True)
     return elab, result, mesh
+
+
+def _compile(path: str):
+    """Elaborate a .soidl file and build its 3D mesh; return (elab, result, mesh)."""
+    with open(path) as f:
+        return _compile_source(f.read())
+
+
+def build_bundle_from_source(src: str, n_modes: int = 3,
+                             static_cases: Optional[list] = None) -> dict:
+    """Compile SOIDL source text and return the web-viewer bundle dict.
+
+    Raises on parse/elaboration failure; if the elaborator collected
+    errors (elab.errors non-empty), raises ValueError with them joined.
+    """
+    elab, result, mesh = _compile_source(src)
+    if getattr(elab, "errors", None):
+        raise ValueError("; ".join(str(e) for e in elab.errors))
+    return build_bundle_from_compiled(elab, result, mesh,
+                                      n_modes=n_modes,
+                                      static_cases=static_cases)
 
 
 def _geometry(mesh, process):

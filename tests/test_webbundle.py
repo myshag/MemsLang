@@ -69,3 +69,17 @@ def test_static_layers_have_zero_disp():
             if abs(r["disp"][3*v]) > 0 or abs(r["disp"][3*v+1]) > 0:
                 bad += 1
     assert bad == 0
+
+
+def test_bundle_from_source_roundtrip():
+    from soidlc.webbundle import build_bundle_from_source
+    src = open("examples/comb_resonator.soidl").read()
+    b = build_bundle_from_source(src, n_modes=1)
+    assert b["geometry"]["positions"] and b["results"]
+
+
+def test_bundle_from_source_broken_raises():
+    import pytest
+    from soidlc.webbundle import build_bundle_from_source
+    with pytest.raises(Exception):
+        build_bundle_from_source("this is not valid soidl !!!")
