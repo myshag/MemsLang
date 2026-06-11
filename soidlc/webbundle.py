@@ -82,8 +82,73 @@ def _suspended_islands(elab):
     return out
 
 
-def _modal_results(elab, mesh, n_modes):   # implemented in Task 2
-    return []
+def _nearest_disp_batch(verts_xy, femmesh, vec, dof_of, max_dist):
+    """Return lists of (ux, uy) for each vertex in verts_xy using cKDTree.
+
+    Vertices farther than max_dist from any FEM node get (0.0, 0.0).
+    """
+    import numpy as np
+    from scipy.spatial import cKDTree
+
+    nodes = np.array(femmesh.nodes, dtype=float)  # (N, 2)
+    qpts = np.array(verts_xy, dtype=float)         # (V, 2)
+
+    tree = cKDTree(nodes)
+    dists, idxs = tree.query(qpts, k=1)
+
+    results = []
+    for dist, ni in zip(dists, idxs):
+        if dist > max_dist:
+            results.append((0.0, 0.0))
+        else:
+            base = dof_of.get(int(ni), -1)
+            if base >= 0:
+                results.append((vec[base], vec[base + 1]))
+            else:
+                results.append((0.0, 0.0))
+    return results
+
+
+def _modal_results(elab, mesh, n_modes):
+    dev = elab.process.device()
+    if dev is None:
+        return []
+    E, nu, rho, t = dev.E, dev.nu, dev.rho, dev.thickness * 1e-6
+    from . import fem
+    verts = mesh.vertices
+    islands = _suspended_islands(elab)
+    out = []
+    for cid, ss in islands:
+        fm = fem.build_mesh(ss, 12.0)
+        if not fm.cells or fm.n_cells > fem.MAX_ELEMENTS:
+            continue
+        freqs, vecs, dof_of = fem.modal(fm, E, nu, rho, t, n_modes=n_modes)
+        xs = [p[0] for p in fm.nodes]
+        ys = [p[1] for p in fm.nodes]
+        max_dist = 0.05 * max(max(xs) - min(xs), max(ys) - min(ys), 1.0) + 12.0
+
+        # Precompute xy of all 3D vertices for batched KD-tree queries
+        verts_xy = [(vx, vy) for (vx, vy, vz) in verts]
+
+        for mi, (f, vec) in enumerate(zip(freqs, vecs), 1):
+            ux_uy_list = _nearest_disp_batch(verts_xy, fm, vec, dof_of, max_dist)
+            disp = []
+            mags = []
+            for (ux, uy) in ux_uy_list:
+                disp.extend((ux, uy, 0.0))
+                mags.append(math.hypot(ux, uy))
+            mmax = max(mags) or 1.0
+            out.append({
+                "type": "modal",
+                "label": (f"Island {cid} — Mode {mi}" if len(islands) > 1
+                          else f"Mode {mi}"),
+                "freq_hz": float(f),
+                "animate": True,
+                "disp": [d / mmax for d in disp],
+                "dmax_um": float(mmax),
+                "fields": {"disp_mag": [m / mmax for m in mags]},
+            })
+    return out
 
 
 def _static_results(elab, mesh, cases):    # implemented in Task 3
