@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import os
-from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from soidlc import webbundle
 
@@ -15,9 +15,22 @@ DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend"
 
 app = FastAPI(title="soidlc viewer")
 
+_BUNDLES: dict = {}            # name -> (mtime, bundle)
+
 
 def _example_names():
     return sorted(f[:-6] for f in os.listdir(EXAMPLES) if f.endswith(".soidl"))
+
+
+def _bundle_for(name: str) -> dict:
+    path = os.path.join(EXAMPLES, f"{name}.soidl")
+    mtime = os.path.getmtime(path)
+    hit = _BUNDLES.get(name)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    b = webbundle.build_bundle(path)
+    _BUNDLES[name] = (mtime, b)
+    return b
 
 
 @app.get("/api/examples")
@@ -25,19 +38,34 @@ def examples():
     return [{"name": n, "title": n.replace("_", " ")} for n in _example_names()]
 
 
-@lru_cache(maxsize=32)
-def _cached_bundle(name: str) -> dict:
-    return webbundle.build_bundle(os.path.join(EXAMPLES, f"{name}.soidl"))
-
-
 @app.get("/api/bundle/{name}")
 def bundle(name: str):
     if name not in _example_names():
         raise HTTPException(status_code=404, detail=f"unknown example {name}")
     try:
-        return _cached_bundle(name)
+        return _bundle_for(name)
     except Exception as e:  # surface compile/FEM failure, don't swallow
         raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.get("/api/source/{name}")
+def source(name: str):
+    if name not in _example_names():
+        raise HTTPException(status_code=404, detail=f"unknown example {name}")
+    with open(os.path.join(EXAMPLES, f"{name}.soidl")) as f:
+        return {"name": name, "source": f.read()}
+
+
+class CompileRequest(BaseModel):
+    source: str
+
+
+@app.post("/api/compile")
+def compile_source(req: CompileRequest):
+    try:
+        return webbundle.build_bundle_from_source(req.source)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e) or repr(e))
 
 
 if os.path.isdir(DIST):
