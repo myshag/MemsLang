@@ -180,3 +180,16 @@ def test_static_cantilever_tip_load():
     y_analytic = F_line * L ** 3 / (3 * E * I)
     uy = abs(disp[tip][1])
     assert 0.5 * y_analytic < uy < 1.6 * y_analytic
+
+
+def test_plot_modes_triangles(tmp_path):
+    import os
+    from soidlc import femplot
+    body = _rect_shape(0.0, 0.0, 100.0, 10.0)
+    anchor = _rect_shape(0.0, 0.0, 2.0, 10.0, mech="anchored")
+    m = mesh_build.build_mesh([body, anchor], h=3.0)
+    freqs, vecs, dof_of = skfem_solve.modal(m, 170e9, 0.28, 2330.0, 10e-6,
+                                            n_modes=2)
+    out = str(tmp_path / "modes.png")
+    femplot.plot_modes(m, freqs, vecs, dof_of, out)
+    assert os.path.exists(out) and os.path.getsize(out) > 0

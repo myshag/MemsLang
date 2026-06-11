@@ -196,9 +196,9 @@ def plot_modes(mesh: Mesh2D, freqs: List[float], vectors: List[List[float]],
             return (ph - label_h) - offy - y * sc + 0
 
         # undeformed wireframe
-        for (n0, n1, n2, n3, _dx, _dy, _f) in mesh.elems:
-            quad = [mesh.nodes[i] for i in (n0, n1, n2, n3)]
-            for a, b in zip(quad, quad[1:] + quad[:1]):
+        for (n0, n1, n2) in mesh.cells:
+            tri = [mesh.nodes[i] for i in (n0, n1, n2)]
+            for a, b in zip(tri, tri[1:] + tri[:1]):
                 _line(img, W, H, tx(a[0]), ty(a[1]), tx(b[0]), ty(b[1]), EDGE)
 
         # deformed, coloured by |u|
@@ -206,11 +206,9 @@ def plot_modes(mesh: Mesh2D, freqs: List[float], vectors: List[List[float]],
         for (px, py), (ux, uy) in zip(mesh.nodes, disp):
             pts.append((tx(px + s * ux), ty(py + s * uy)))
             cols.append(_cmap(math.hypot(ux, uy) / umax))
-        for (n0, n1, n2, n3, _dx, _dy, _f) in mesh.elems:
+        for (n0, n1, n2) in mesh.cells:
             _fill_tri(img, W, H, pts[n0], pts[n1], pts[n2],
                       cols[n0], cols[n1], cols[n2])
-            _fill_tri(img, W, H, pts[n0], pts[n2], pts[n3],
-                      cols[n0], cols[n2], cols[n3])
 
         _text(img, W, H, k * pw + m, ph - label_h + 4,
               f"MODE {k + 1}  {f / 1e3:.2f} KHZ", TEXT, scale=2)
