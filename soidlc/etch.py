@@ -1,7 +1,8 @@
 """Level-set Bosch / DRIE etch simulation (tier-2 process model).
 
-Drives the C kernel in ``etch_core.c`` (auto-compiled with the system gcc on
-first use; falls back to a slow pure-Python kernel if no compiler is present).
+Drives the C kernel (shared ``levelset.c`` core + ``bosch.c`` velocity field,
+compiled together into ``etch_core.so`` with the system gcc on first use; falls
+back to a slow pure-Python kernel if no compiler is present).
 Given a mask cross-section and a Bosch recipe it evolves the silicon etch
 front and reports the resulting profile: trench depth, sidewall scalloping,
 aspect-ratio-dependent etch (ARDE / RIE-lag), taper, and footing at the buried
@@ -20,7 +21,10 @@ from typing import List, Optional, Tuple
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SO = os.path.join(_HERE, "etch_core.so")
-_SRC = os.path.join(_HERE, "etch_core.c")
+# shared level-set core + per-process velocity fields, one shared library
+_SRCS = [os.path.join(_HERE, f)
+         for f in ("levelset.c", "bosch.c", "wet.c", "corner.c")]
+_HDR = os.path.join(_HERE, "levelset.h")
 _LIB = None
 
 
@@ -28,14 +32,15 @@ def _load_lib():
     global _LIB
     if _LIB is not None:
         return _LIB
+    deps = _SRCS + [_HDR]
     need = (not os.path.exists(_SO)
-            or os.path.getmtime(_SO) < os.path.getmtime(_SRC))
+            or os.path.getmtime(_SO) < max(os.path.getmtime(s) for s in deps))
     if need:
         for cc in ("gcc", "cc", "clang"):
             try:
                 subprocess.run(
                     [cc, "-O3", "-fopenmp", "-shared", "-fPIC",
-                     _SRC, "-o", _SO, "-lm"],
+                     *_SRCS, "-o", _SO, "-lm"],
                     check=True, capture_output=True)
                 break
             except (FileNotFoundError, subprocess.CalledProcessError):

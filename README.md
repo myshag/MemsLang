@@ -244,8 +244,10 @@ The pipeline mirrors the `soidlc` stages from the spec:
 
 Alongside the device pipeline there is a family of feature-scale **fabrication**
 simulators — physical level-set etch models, not geometry offsets. They share a
-single C99 + OpenMP level-set core (`etch_core.c`), auto-compiled on first use
-with the system compiler and driven through `ctypes` (pure-Python fallback where
+single C99 + OpenMP upwind-Godunov level-set core (`levelset.c`); each process
+adds only its velocity field (`bosch.c`, `wet.c`, `corner.c`), and the four
+compile together into one `etch_core.so`, auto-built on first use with the
+system compiler and driven through `ctypes` (pure-Python fallback where
 practical):
 
 - **Bosch DRIE** (`etch.py`) — time-multiplexed deep reactive-ion etch of the
@@ -353,7 +355,11 @@ soidlc/
   svg.py         top-view SVG preview
   render.py      pure-Python PNG software renderer
   cli.py         `soidlc` command-line entry point
-  etch_core.c    shared C99+OpenMP level-set core (auto-compiled)
+  levelset.{c,h} shared C99+OpenMP upwind-Godunov level-set core
+  bosch.c        Bosch DRIE velocity field + entry point
+  wet.c          KOH/TMAH anisotropic velocity field (2D + 3D)
+  corner.c       plan-view convex-corner undercut velocity field
+                 (the three above compile together into etch_core.so)
   etch.py        Bosch DRIE feature-scale simulation
   recipe_physics.py recipe params -> effective etch knobs
   koh.py         anisotropic (KOH/TMAH) wet etch, 2D + 3D
