@@ -30,6 +30,8 @@ def main(argv=None) -> int:
                          "absorb the lumped-model bias (solve targets are "
                          "met by the FEM-predicted frequency)")
     ap.add_argument("-q", "--quiet", action="store_true")
+    ap.add_argument("--web", metavar="PATH",
+                    help="also write a web-viewer JSON bundle to PATH")
     args = ap.parse_args(argv)
 
     out = args.out
@@ -46,6 +48,15 @@ def main(argv=None) -> int:
     except Exception as e:  # noqa: BLE001 - surface a clean message
         print(f"soidlc: error: {e}", file=sys.stderr)
         return 1
+
+    if args.web:
+        import json
+        from . import webbundle
+        bundle = webbundle.build_bundle(args.input, n_modes=3)
+        with open(args.web, "w") as f:
+            json.dump(bundle, f)
+        if not args.quiet:
+            print(f"web     : {args.web}")
 
     if not args.quiet:
         print(f"process : {art.process.name} "

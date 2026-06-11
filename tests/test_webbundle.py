@@ -1,4 +1,8 @@
+import json
 import math
+import subprocess
+import sys
+
 from soidlc.webbundle import build_bundle
 
 
@@ -26,3 +30,29 @@ def test_bundle_modal_results():
     assert abs(max(mags) - 1.0) < 1e-6
     assert max(r["fields"]["disp_mag"]) <= 1.0 + 1e-9
     assert min(r["fields"]["disp_mag"]) >= 0.0
+
+
+def test_web_cli_writes_json(tmp_path):
+    out = tmp_path / "comb.web.json"
+    subprocess.run([sys.executable, "-m", "soidlc.cli",
+                    "examples/comb_resonator.soidl", "-o",
+                    str(tmp_path / "comb"), "--web", str(out)],
+                   check=True)
+    b = json.loads(out.read_text())
+    assert b["geometry"]["positions"] and b["results"]
+
+
+def test_bundle_static_case():
+    from soidlc.webbundle import _compile, _suspended_islands
+    from soidlc import fem
+    elab, result, mesh = _compile("examples/comb_resonator.soidl")
+    _cid, ss = _suspended_islands(elab)[0]
+    fm = fem.build_mesh(ss, 12.0)
+    free = [n for n in range(len(fm.nodes)) if n not in fm.fixed]
+    tip = max(free, key=lambda n: fm.nodes[n][0])
+    b = build_bundle("examples/comb_resonator.soidl", n_modes=0,
+                     static_cases=[{"label": "tip load",
+                                    "forces": {tip: (0.0, -1.0)}}])
+    st = [r for r in b["results"] if r["type"] == "static"]
+    assert len(st) == 1 and st[0]["animate"] is False
+    assert len(st[0]["disp"]) == len(b["geometry"]["positions"])

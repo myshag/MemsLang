@@ -151,5 +151,48 @@ def _modal_results(elab, mesh, n_modes):
     return out
 
 
-def _static_results(elab, mesh, cases):    # implemented in Task 3
-    return []
+def _static_results(elab, mesh, cases):
+    dev = elab.process.device()
+    if dev is None:
+        return []
+    E, nu, t = dev.E, dev.nu, dev.thickness * 1e-6
+    from . import fem
+    islands = _suspended_islands(elab)
+    if not islands:
+        return []
+    _cid, ss = islands[0]
+    fm = fem.build_mesh(ss, 12.0)
+    if not fm.cells:
+        return []
+    xs = [p[0] for p in fm.nodes]
+    ys = [p[1] for p in fm.nodes]
+    max_dist = 0.05 * max(max(xs) - min(xs), max(ys) - min(ys), 1.0) + 12.0
+    out = []
+    verts_xy = [(vx, vy) for (vx, vy, vz) in mesh.vertices]
+    for case in cases:
+        disp_map = fem.static_solve(fm, E, nu, t, case["forces"])
+        # Build a flat vec[] and dof_of dict compatible with _nearest_disp_batch
+        vec = []
+        dof_of = {}
+        base = 0
+        for n in range(len(fm.nodes)):
+            uxuy = disp_map.get(n)
+            if uxuy is None:
+                dof_of[n] = -1
+            else:
+                dof_of[n] = base
+                vec.extend((uxuy[0], uxuy[1]))
+                base += 2
+        ux_uy_list = _nearest_disp_batch(verts_xy, fm, vec, dof_of, max_dist)
+        disp = []
+        mags = []
+        for (ux, uy) in ux_uy_list:
+            disp.extend((ux, uy, 0.0))
+            mags.append(math.hypot(ux, uy))
+        mmax = max(mags) or 1.0
+        out.append({"type": "static", "label": case["label"],
+                    "freq_hz": None, "animate": False,
+                    "disp": [d / mmax for d in disp],
+                    "dmax_um": float(mmax),
+                    "fields": {"disp_mag": [m / mmax for m in mags]}})
+    return out
