@@ -92,14 +92,17 @@ class WetResult3D:
 def simulate_3d(mask_open, domain_w: float, domain_h: float, depth: float,
                 dx: float = 0.5, recipe: Optional[WetEtch] = None,
                 mask_thick: float = 1.0, diagram=None,
-                orientation: str = "100") -> WetResult3D:
+                orientation: str = "100", misalign_deg: float = 0.0,
+                miscut_deg: float = 0.0, miscut_az: float = 0.0) -> WetResult3D:
     """3D anisotropic etch.  ``mask_open(x, y) -> bool`` is the mask opening
     over the (domain_w x domain_h) wafer surface (um).
 
     By default the closed-form {111}-notch model (``recipe``) drives the etch.
     Pass a ``crystal_rates.RateDiagram`` as ``diagram`` (with a wafer
     ``orientation`` of "100"/"110"/"111") to drive it from a calibrated,
-    measured anisotropy map sampled into a lookup table instead."""
+    measured anisotropy map sampled into a lookup table instead.
+    ``misalign_deg`` turns the mask off the wafer flat (<110>); ``miscut_deg``/
+    ``miscut_az`` tilt the surface off the ideal pole (an off-axis wafer)."""
     recipe = recipe or WetEtch()
     nx = max(8, int(round(domain_w / dx)))
     ny = max(8, int(round(domain_h / dx)))
@@ -129,7 +132,8 @@ def simulate_3d(mask_open, domain_w: float, domain_h: float, depth: float,
     if diagram is not None:
         from . import crystal_rates as _cr
         ntheta, nphi = 90, 180
-        tab_list, _rmax = _cr.sample_table(diagram, orientation, ntheta, nphi)
+        tab_list, _rmax = _cr.sample_table(diagram, orientation, ntheta, nphi,
+                                           misalign_deg, miscut_deg, miscut_az)
         tab = (ctypes.c_double * len(tab_list))(*tab_list)
         lib.wet_run_3d_tab(phi, mk, nx, ny, nz, dx, tab, ntheta, nphi,
                            recipe.selectivity, recipe.steps, 0.30 * dx, 2)

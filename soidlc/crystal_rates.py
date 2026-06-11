@@ -149,25 +149,59 @@ class RateDiagram:
 # wafer orientation: crystal-frame basis vectors (X, Y, Z) of the wafer axes,
 # where Z is the surface normal and X, Y span the wafer surface.
 # ---------------------------------------------------------------------------
-def wafer_basis(orientation: str) -> Tuple[Vec, Vec, Vec]:
+def _rodrigues(v: Vec, k: Vec, ang: float) -> Vec:
+    """Rotate vector ``v`` about unit axis ``k`` by ``ang`` radians."""
+    c, s = math.cos(ang), math.sin(ang)
+    kxv = (k[1] * v[2] - k[2] * v[1],
+           k[2] * v[0] - k[0] * v[2],
+           k[0] * v[1] - k[1] * v[0])
+    kd = k[0] * v[0] + k[1] * v[1] + k[2] * v[2]
+    return tuple(v[i] * c + kxv[i] * s + k[i] * kd * (1.0 - c) for i in range(3))
+
+
+def wafer_basis(orientation: str, misalign_deg: float = 0.0,
+                miscut_deg: float = 0.0, miscut_az: float = 0.0
+                ) -> Tuple[Vec, Vec, Vec]:
+    """Crystal-frame basis (X, Y, Z) of the wafer axes (Z = surface normal).
+
+    ``misalign_deg``  rotates the mask in-plane about Z -- i.e. the mask edges
+                      are turned off the wafer flat (<110>); this is what makes
+                      even straight edges and concave corners undercut.
+    ``miscut_deg/az`` tilts Z itself off the ideal pole (an off-axis / vicinal
+                      wafer), tipping the facets asymmetrically.
+    """
     o = orientation.replace("(", "").replace(")", "").strip()
     if o == "100":
-        return ((1, 0, 0), (0, 1, 0), (0, 0, 1))
-    if o == "110":
-        return (_norm((-1, 1, 0)), (0, 0, 1), _norm((1, 1, 0)))
-    if o == "111":
-        return (_norm((1, -1, 0)), _norm((1, 1, -2)), _norm((1, 1, 1)))
-    raise ValueError("unknown wafer orientation %r (use 100/110/111)" % orientation)
+        X, Y, Z = (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)
+    elif o == "110":
+        X, Y, Z = _norm((-1, 1, 0)), (0.0, 0.0, 1.0), _norm((1, 1, 0))
+    elif o == "111":
+        X, Y, Z = _norm((1, -1, 0)), _norm((1, 1, -2)), _norm((1, 1, 1))
+    else:
+        raise ValueError("unknown wafer orientation %r (use 100/110/111)" % orientation)
+    if miscut_deg:                       # tilt the whole frame about an in-plane axis
+        a = math.radians(miscut_az)
+        axis = _norm((X[0] * math.cos(a) + Y[0] * math.sin(a),
+                      X[1] * math.cos(a) + Y[1] * math.sin(a),
+                      X[2] * math.cos(a) + Y[2] * math.sin(a)))
+        m = math.radians(miscut_deg)
+        X, Y, Z = (_rodrigues(X, axis, m), _rodrigues(Y, axis, m),
+                   _rodrigues(Z, axis, m))
+    if misalign_deg:                     # spin the mask in-plane about Z
+        r = math.radians(misalign_deg)
+        X, Y = _rodrigues(X, Z, r), _rodrigues(Y, Z, r)
+    return X, Y, Z
 
 
 def sample_table(diagram: RateDiagram, orientation: str = "100",
-                 ntheta: int = 90, nphi: int = 180
+                 ntheta: int = 90, nphi: int = 180, misalign_deg: float = 0.0,
+                 miscut_deg: float = 0.0, miscut_az: float = 0.0
                  ) -> Tuple[List[float], float]:
     """Sample the diagram onto a (theta, phi) table in the *wafer* frame:
     theta in [0, pi] from the surface normal, phi in [0, 2pi).  Returns the
     flat table normalised to max-rate 1.0 plus the absolute max rate (um/min)
     so callers know the real scale."""
-    X, Y, Z = wafer_basis(orientation)
+    X, Y, Z = wafer_basis(orientation, misalign_deg, miscut_deg, miscut_az)
     tab = [0.0] * (ntheta * nphi)
     rmax = 0.0
     for it in range(ntheta):
@@ -205,11 +239,12 @@ def _colormap(t: float) -> Tuple[int, int, int]:
 
 
 def render_diagram(diagram: RateDiagram, path: str, orientation: str = "100",
-                   size: int = 340) -> None:
+                   size: int = 340, misalign_deg: float = 0.0,
+                   miscut_deg: float = 0.0, miscut_az: float = 0.0) -> None:
     """Stereographic plot of the upper hemisphere R(n) in the wafer frame, with
     the {100}/{110}/{111} poles marked."""
     from .render import write_png
-    X, Y, Z = wafer_basis(orientation)
+    X, Y, Z = wafer_basis(orientation, misalign_deg, miscut_deg, miscut_az)
     W = H = size
     img = bytearray([18, 18, 24] * (W * H))
     rmax = diagram.rmax() or 1.0

@@ -352,6 +352,28 @@ self-terminates into 54.74° {111} pyramids/V-grooves, while a (110) wafer (its
 {111} planes run perpendicular to the surface) etches deeper, near-vertical-walled
 trenches — reproduced by the kernel directly from the rotated table.
 
+Because the anisotropy lives in the *crystal*, the same machinery covers the two
+ways geometry degrades, each just another rotation of the sampled table
+(`simulate_3d(..., misalign_deg=…, miscut_deg=…, miscut_az=…)`):
+
+- **mask misalignment** — turning the mask off the wafer flat (`misalign_deg`)
+  spins the crystal pattern under the (grid-aligned) mask. Straight ⟨110⟩ edges
+  stop being slow {111} and undercut hard — in the plan-view model a square mesa
+  edge recedes **0.6 µm aligned but 11.7 µm at only 8°**, peaking near 30° (the
+  fast ⟨410⟩ plane); in 3D the pit stops self-terminating (its floor stays
+  ~24 µm wide at 30° instead of pinching to a 4.8 µm pyramid apex). This is why
+  flat alignment is critical.
+- **off-axis / vicinal wafer** — a `miscut_deg` tilt of the surface normal off
+  the ideal pole decenters the diagram, so a pyramid's four facets are no longer
+  equal and it tips to one side.
+
+| (100) aligned | mask misaligned 22° | 10° miscut (off-axis) |
+| --- | --- | --- |
+| ![aligned](docs/crystal_aligned.png) | ![misaligned](docs/crystal_misalign.png) | ![miscut](docs/crystal_miscut.png) |
+
+(Stereographic R(n) in the wafer frame: misalignment **rotates** the {111}
+cusps under the mask, the miscut **shifts** them off-centre.)
+
 ## Supported SOIDL subset (v0.1)
 
 Implemented: `process { stack / masks / rules }`, `component(params) { port,

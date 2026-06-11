@@ -97,5 +97,48 @@ class TestTableDrivenEtch(unittest.TestCase):
                            self._depth(r100, 30, 30) + 1.0)
 
 
+def _angle(u, v):
+    d = sum(a * b for a, b in zip(u, v))
+    d = 1.0 if d > 1 else (-1.0 if d < -1 else d)
+    return math.degrees(math.acos(d))
+
+
+class TestMisalignAndMiscut(unittest.TestCase):
+    def test_misalign_spins_inplane_keeps_normal(self):
+        X0, Y0, Z0 = CR.wafer_basis("100")
+        X, Y, Z = CR.wafer_basis("100", misalign_deg=20.0)
+        self.assertLess(_angle(Z, Z0), 1e-6)          # surface normal unchanged
+        self.assertAlmostEqual(_angle(X, X0), 20.0, delta=1e-6)   # mask spun
+
+    def test_miscut_tilts_normal_off_pole(self):
+        _, _, Z0 = CR.wafer_basis("100")
+        _, _, Z = CR.wafer_basis("100", miscut_deg=8.0)
+        self.assertAlmostEqual(_angle(Z, Z0), 8.0, delta=1e-6)
+        self.assertAlmostEqual(_angle(Z, (0, 0, 1)), 8.0, delta=1e-6)
+
+    def _floor_width(self, res, y):
+        nx, ny, nz, dx, j0 = res.nx, res.ny, res.nz, res.dx, res.j0
+        jy = int(y / dx)
+        kd = j0
+        for k in range(j0, nz):
+            if any(res.phi[ix + nx * (jy + ny * k)] > 0 for ix in range(nx)):
+                kd = k
+        return sum(1 for ix in range(nx)
+                   if res.phi[ix + nx * (jy + ny * kd)] > 0) * dx
+
+    def test_misaligned_mask_loses_self_termination(self):
+        # aligned: the pit pinches toward a pyramid (narrow floor); misaligned:
+        # the {111} facets no longer match the mask, so the floor stays wide.
+        from soidlc import koh
+        d = CR.RateDiagram.from_condition("KOH_30_70")
+        sq = lambda x, y: 18 <= x <= 42 and 18 <= y <= 42
+        kw = dict(dx=0.6, diagram=d, orientation="100",
+                  recipe=koh.WetEtch(steps=130))
+        aligned = koh.simulate_3d(sq, 60, 60, 30, misalign_deg=0.0, **kw)
+        skew = koh.simulate_3d(sq, 60, 60, 30, misalign_deg=30.0, **kw)
+        self.assertGreater(self._floor_width(skew, 30),
+                           2.0 * self._floor_width(aligned, 30))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
