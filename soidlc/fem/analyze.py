@@ -44,19 +44,22 @@ def analyze(elab, art, h: float = 12.0,
                 f"fem    mode 1 vs lumped f0: {freqs[0] / 1e3:.2f} kHz "
                 f"vs {f0.value / 1e3:.2f} kHz ({d:+.1f}%)")
         if plot_prefix:
-            from .. import femplot
-            modes_png = f"{plot_prefix}_fem_island{cid}_modes.png"
-            femplot.plot_modes(mesh, freqs, vecs, dof_of, modes_png)
-            art.files[f"fem_modes_{cid}"] = modes_png
-            island_ids = {id(s) for s in ss}
-            others = [s for s in art.result.shapes
-                      if id(s) not in island_ids]
-            d3_png = f"{plot_prefix}_fem_island{cid}_mode1_3d.png"
-            femplot.render_deformed_3d(ss, others, elab.process, mesh,
-                                       vecs[0], dof_of, d3_png)
-            art.files[f"fem_3d_{cid}"] = d3_png
-            art.report.append(
-                f"fem    island #{cid} plots: {modes_png}, {d3_png}")
+            try:
+                from .. import femplot
+                modes_png = f"{plot_prefix}_fem_island{cid}_modes.png"
+                femplot.plot_modes(mesh, freqs, vecs, dof_of, modes_png)
+                art.files[f"fem_modes_{cid}"] = modes_png
+                island_ids = {id(s) for s in ss}
+                others = [s for s in art.result.shapes
+                          if id(s) not in island_ids]
+                d3_png = f"{plot_prefix}_fem_island{cid}_mode1_3d.png"
+                femplot.render_deformed_3d(ss, others, elab.process, mesh,
+                                           vecs[0], dof_of, d3_png)
+                art.files[f"fem_3d_{cid}"] = d3_png
+                art.report.append(
+                    f"fem    island #{cid} plots: {modes_png}, {d3_png}")
+            except Exception as e:  # noqa: BLE001 - femplot not yet adapted (Task 9)
+                art.warnings.append(f"femplot: render failed (Task 9): {e}")
         try:
             from .. import reduce as _rom
             _rom.build(elab, art, ss, mesh, freqs, vecs, dof_of,

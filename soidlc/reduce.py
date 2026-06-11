@@ -30,7 +30,7 @@ from typing import Dict, List, Optional, Tuple
 from . import geometry as G
 from . import sast as A
 from .elaborate import _net_refs
-from .fem2d import Mesh2D
+from .fem import FemMesh as Mesh2D
 from .units import Quantity
 
 EPS0 = 8.8541878128e-12

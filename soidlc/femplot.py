@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple
 
 from . import geometry as G
 from . import mesh as M3
-from .fem2d import Mesh2D
+from .fem import FemMesh as Mesh2D
 from .render import render_mesh, write_png
 
 BG = (24, 24, 30)

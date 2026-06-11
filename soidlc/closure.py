@@ -195,7 +195,7 @@ def run(elab, device: Optional[str] = None,
         Meshes only the suspended island (same domain as the verification
         stage) so the calibration factor transfers exactly.
         """
-        from . import connectivity, fem2d
+        from . import connectivity, fem
         try:
             res = elab.elaborate_device(name, overrides=ov, quiet=True)
             f0 = res.model.get("f0")
@@ -214,12 +214,12 @@ def run(elab, device: Optional[str] = None,
             island = max(suspended,
                          key=lambda ss: sum(s.polygon.area() for s in ss
                                             if s.mech == "released"))
-            mesh = fem2d.build_mesh(island, fem_h)
-            if not mesh.elems or len(mesh.elems) > fem2d.MAX_ELEMENTS:
+            mesh = fem.build_mesh(island, fem_h)
+            if not mesh.cells or mesh.n_cells > fem.MAX_ELEMENTS:
                 return None
             d = elab.process.device()
-            freqs = fem2d.modal(mesh, d.E, d.nu, d.rho,
-                                d.thickness * 1e-6, n_modes=1)
+            freqs, _vecs, _dof = fem.modal(mesh, d.E, d.nu, d.rho,
+                                           d.thickness * 1e-6, n_modes=1)
             return (freqs[0], f0.value) if freqs else None
         except Exception:
             return None

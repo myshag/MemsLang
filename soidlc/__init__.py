@@ -65,8 +65,8 @@ def compile_source(src: str, device: Optional[str] = None,
                      "mtl": out_prefix + ".mtl"}
 
     if fem:
-        from . import fem2d
-        fem2d.analyze(elab, art, h=fem_h, plot_prefix=out_prefix)
+        from . import fem
+        fem.analyze(elab, art, h=fem_h, plot_prefix=out_prefix)
     return art
 
 
