@@ -69,6 +69,12 @@ def _load():
             ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double,
             ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
             ctypes.c_int, ctypes.c_double, ctypes.c_int]
+        lib.wet_run_3d_tab.restype = None
+        lib.wet_run_3d_tab.argtypes = [
+            ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double,
+            ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_int,
+            ctypes.c_double, ctypes.c_int, ctypes.c_double, ctypes.c_int]
         lib._wet_set = True
     return lib
 
@@ -85,9 +91,15 @@ class WetResult3D:
 
 def simulate_3d(mask_open, domain_w: float, domain_h: float, depth: float,
                 dx: float = 0.5, recipe: Optional[WetEtch] = None,
-                mask_thick: float = 1.0) -> WetResult3D:
+                mask_thick: float = 1.0, diagram=None,
+                orientation: str = "100") -> WetResult3D:
     """3D anisotropic etch.  ``mask_open(x, y) -> bool`` is the mask opening
-    over the (domain_w x domain_h) wafer surface (um)."""
+    over the (domain_w x domain_h) wafer surface (um).
+
+    By default the closed-form {111}-notch model (``recipe``) drives the etch.
+    Pass a ``crystal_rates.RateDiagram`` as ``diagram`` (with a wafer
+    ``orientation`` of "100"/"110"/"111") to drive it from a calibrated,
+    measured anisotropy map sampled into a lookup table instead."""
     recipe = recipe or WetEtch()
     nx = max(8, int(round(domain_w / dx)))
     ny = max(8, int(round(domain_h / dx)))
@@ -114,9 +126,17 @@ def simulate_3d(mask_open, domain_w: float, domain_h: float, depth: float,
     if lib is None:
         raise RuntimeError("3D wet etch requires the compiled C core")
     mk = (ctypes.c_ubyte * n).from_buffer_copy(bytes(mask))
-    lib.wet_run_3d(phi, mk, nx, ny, nz, dx, recipe.r100, recipe.r111,
-                   recipe.notch_w, recipe.selectivity, recipe.steps,
-                   0.30 * dx, 2)
+    if diagram is not None:
+        from . import crystal_rates as _cr
+        ntheta, nphi = 90, 180
+        tab_list, _rmax = _cr.sample_table(diagram, orientation, ntheta, nphi)
+        tab = (ctypes.c_double * len(tab_list))(*tab_list)
+        lib.wet_run_3d_tab(phi, mk, nx, ny, nz, dx, tab, ntheta, nphi,
+                           recipe.selectivity, recipe.steps, 0.30 * dx, 2)
+    else:
+        lib.wet_run_3d(phi, mk, nx, ny, nz, dx, recipe.r100, recipe.r111,
+                       recipe.notch_w, recipe.selectivity, recipe.steps,
+                       0.30 * dx, 2)
     return WetResult3D(list(phi), nx, ny, nz, dx, j0)
 
 

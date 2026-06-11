@@ -316,6 +316,42 @@ differences, so concave mask corners round by a few µm instead of staying
 perfectly sharp — fine for sizing compensation (the convex topic), not for
 absolute concave-corner geometry.
 
+### Calibrated crystal etch-rate diagram
+
+The closed-form KOH model above carries three numbers (`r100`/`r110`/`r111`).
+`crystal_rates.py` replaces that with a **data-driven** anisotropy map: it
+stores *measured* low-index plane rates for named process conditions (KOH
+30 %/70 °C, KOH 44 %/85 °C, TMAH 25 %/80 °C — representative literature anchors,
+Seidel 1990 / Sato 1999, calibratable) and reconstructs a continuous,
+cubic-symmetry-correct rate diagram `R(n)` over the unit sphere by symmetry-aware
+RBF interpolation (each `{hkl}` anchor expanded over the 48 operations of `m-3m`).
+
+```
+python3 examples/crystal_demo.py
+KOH 30wt% / 70C   (anchors -> 74 symmetry-equivalent normals)
+   R(1, 0, 0) =  0.8000 um/min   (1.00x R100)
+   R(1, 1, 0) =  1.4000 um/min   (1.75x R100)   <- {110} fastest low-index
+   R(1, 1, 1) =  0.0105 um/min   (0.01x R100)   <- {111} self-terminating
+   anisotropy R100/R111 = 76
+```
+
+The diagram is sampled into a `(theta, phi)` lookup table (in the **wafer**
+frame, so arbitrary orientation is just a rotation of the crystal axes) that a
+dedicated kernel — `wet_run_3d_tab` — reads per cell with bilinear interpolation.
+So the crystallography is *data* fed into the level-set, not hard-coded geometry.
+`koh.simulate_3d(..., diagram=d, orientation="100"|"110"|"111")` switches the 3D
+etch onto it; `crystal_rates.render_diagram` draws the stereographic map (blue
+{111} cusps, red {110} lobes, four-fold symmetric):
+
+| KOH 30 %/70 °C rate diagram (stereographic, (100) frame) |
+| --- |
+| ![rate diagram](docs/crystal_rate_koh.png) |
+
+Changing the wafer cut changes the geometry from the same mask: a (100) wafer
+self-terminates into 54.74° {111} pyramids/V-grooves, while a (110) wafer (its
+{111} planes run perpendicular to the surface) etches deeper, near-vertical-walled
+trenches — reproduced by the kernel directly from the rotated table.
+
 ## Supported SOIDL subset (v0.1)
 
 Implemented: `process { stack / masks / rules }`, `component(params) { port,
@@ -363,10 +399,12 @@ soidlc/
   etch.py        Bosch DRIE feature-scale simulation
   recipe_physics.py recipe params -> effective etch knobs
   koh.py         anisotropic (KOH/TMAH) wet etch, 2D + 3D
+  crystal_rates.py calibrated R(n) diagram (measured planes -> lookup table)
   corner.py      convex-corner undercut + compensation structures
   assembly.py    cap-wafer bonding + sealed-cavity Q
 examples/        comb_resonator.soidl, accelerometer.soidl, gyroscope*.soidl,
-                 etch_demo.py, koh_demo.py, corner_demo.py, wafer_demo.py
+                 etch_demo.py, koh_demo.py, corner_demo.py, crystal_demo.py,
+                 wafer_demo.py
 tests/           unittest suite (units, parsing, watertight meshes, FEM, etch, e2e)
 ```
 
