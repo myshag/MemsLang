@@ -5,7 +5,7 @@ import math
 from typing import Dict, List, Tuple
 
 import numpy as np
-from skfem import (Basis, ElementVector, ElementTriP2, MeshTri,
+from skfem import (Basis, ElementVector, ElementTriP1, ElementTriP2, MeshTri,
                    BilinearForm, condense, solve, solver_eigen_scipy_sym)
 from skfem.helpers import dot
 from skfem.models.elasticity import linear_elasticity
@@ -56,6 +56,25 @@ def _fill_p2(sca_basis: Basis, fill_per_elem: np.ndarray) -> np.ndarray:
     return fill_p2
 
 
+def _fill_p1(sca_p1_basis: Basis, fill_per_elem: np.ndarray) -> np.ndarray:
+    """Project per-element fill factors onto P1 scalar dofs by averaging."""
+    nd = sca_p1_basis.nodal_dofs   # (1, n_vertices)
+    t = sca_p1_basis.mesh.t        # (3, n_elems)
+
+    fill_p1 = np.zeros(sca_p1_basis.N)
+    count_p1 = np.zeros(sca_p1_basis.N)
+
+    for e in range(t.shape[1]):
+        fv = float(fill_per_elem[e])
+        for vi in range(3):
+            dof = int(nd[0, t[vi, e]])
+            fill_p1[dof] += fv
+            count_p1[dof] += 1
+
+    fill_p1 /= np.maximum(count_p1, 1.0)
+    return fill_p1
+
+
 def _assemble(mesh: FemMesh, E: float, nu: float, rho: float):
     """Return (vec_basis, K, M).  K and M are full (not condensed)."""
     vec_basis, sca_basis = _build_basis(mesh)
@@ -81,17 +100,77 @@ def _assemble(mesh: FemMesh, E: float, nu: float, rho: float):
 
 
 def _clamped_dof_array(vec_basis: Basis, mesh: FemMesh) -> np.ndarray:
-    """Return sorted array of global DOF indices for all fixed vertices."""
+    """Return sorted array of global DOF indices for all fixed BCs.
+
+    Clamps:
+    - Both dofs (ux, uy) of every vertex in mesh.fixed.
+    - All dofs (nodal + edge-midpoint) on every mesh edge (facet) whose
+      BOTH endpoint vertices are in mesh.fixed.  This ensures P2 midside
+      nodes on fixed edges are also fully constrained.
+    """
+    fixed_nodes = mesh.fixed
     vd = vec_basis.nodal_dofs   # (2, n_vertices)
     out: List[int] = []
-    for n in mesh.fixed:
+
+    # Nodal dofs for all fixed vertices
+    for n in fixed_nodes:
         out.append(int(vd[0, n]))
         out.append(int(vd[1, n]))
+
+    # Facet (edge) dofs for edges whose both endpoints are fixed
+    facets = vec_basis.mesh.facets   # (2, n_facets): each col = [v0, v1]
+    both_fixed = np.array([
+        facets[0, fi] in fixed_nodes and facets[1, fi] in fixed_nodes
+        for fi in range(facets.shape[1])
+    ])
+    fixed_facet_indices = np.where(both_fixed)[0]
+    if fixed_facet_indices.size > 0:
+        edge_dofs = vec_basis.get_dofs(facets=fixed_facet_indices).flatten()
+        out.extend(int(d) for d in edge_dofs)
+
     return np.array(sorted(set(out)), dtype=np.int64)
 
 
+def _build_p1_mass(mesh: FemMesh, rho: float, t: float) -> Tuple[Basis, object]:
+    """Build the P1 vector mass matrix for vertex-space M-normalisation.
+
+    Returns (p1_vec_basis, M1) where M1 includes lumped extra_mass.
+    """
+    p = np.array(mesh.nodes, dtype=float).T * UM
+    tri = np.array(mesh.cells, dtype=np.int64).T
+    sk_mesh = MeshTri(p, tri)
+
+    p1_vec_basis = Basis(sk_mesh, ElementVector(ElementTriP1()))
+    p1_sca_basis = Basis(sk_mesh, ElementTriP1())
+
+    fill = (np.array(mesh.fill, dtype=float) if mesh.fill
+            else np.ones(len(mesh.cells)))
+    fill_dofs = _fill_p1(p1_sca_basis, fill)
+    f_interp = p1_sca_basis.interpolate(fill_dofs)
+
+    @BilinearForm
+    def mass_form(u, v, w):
+        return rho * w["f"] * dot(u, v)
+
+    M1 = mass_form.assemble(p1_vec_basis, f=f_interp)
+
+    # Add lumped extra_mass to diagonal
+    if mesh.extra_mass:
+        M1 = M1.tolil()
+        vd1 = p1_vec_basis.nodal_dofs   # (2, n_vertices)
+        for node, area_um2 in mesh.extra_mass:
+            m_lump = rho * t * (area_um2 * 1e-12)   # [kg]
+            ix = int(vd1[0, node])
+            iy = int(vd1[1, node])
+            M1[ix, ix] += m_lump
+            M1[iy, iy] += m_lump
+        M1 = M1.tocsr()
+
+    return p1_vec_basis, M1
+
+
 def modal(mesh: FemMesh, E: float, nu: float, rho: float, t: float,
-          n_modes: int = 3, return_vectors: bool = True):
+          n_modes: int = 3):
     """Compute lowest natural frequencies and mode shapes.
 
     Parameters
@@ -100,16 +179,16 @@ def modal(mesh: FemMesh, E: float, nu: float, rho: float, t: float,
     E:      Young's modulus [Pa].
     nu:     Poisson's ratio [-].
     rho:    density [kg/m³].
-    t:      out-of-plane thickness [m] — accepted for signature parity but
-            cancels for plane-stress modal frequencies (does not affect result).
+    t:      out-of-plane thickness [m] — used for lumped extra_mass [kg].
     n_modes: number of eigenfrequencies to extract.
 
     Returns
     -------
     freqs :  list of natural frequencies [Hz], length n_modes.
-    vecs  :  list of M-normalised mode vectors over FREE dofs.
+    vecs  :  list of M-normalised mode vectors over FREE VERTEX dofs.
              Each vec has length 2 * n_free_vertices; for vertex i with
              dof_of[i] = b, displacement = (vec[b], vec[b+1]).
+             Normalised so that full^T M1 full ≈ 1.0 (P1 vertex mass metric).
     dof_of : dict mapping every node index -> base index into each vec.
              Fixed nodes map to -1.
     """
@@ -117,9 +196,26 @@ def modal(mesh: FemMesh, E: float, nu: float, rho: float, t: float,
         return [], [], {}
 
     vec_basis, K, M = _assemble(mesh, E, nu, rho)
+
+    # Fix 3: add lumped extra_mass to the P2 mass matrix
+    if mesh.extra_mass:
+        M = M.tolil()
+        vd = vec_basis.nodal_dofs   # (2, n_vertices)
+        for node, area_um2 in mesh.extra_mass:
+            m_lump = rho * t * (area_um2 * 1e-12)   # [kg]
+            ix = int(vd[0, node])
+            iy = int(vd[1, node])
+            M[ix, ix] += m_lump
+            M[iy, iy] += m_lump
+        M = M.tocsr()
+
+    # Fix 1: clamp P2 vertex dofs AND edge-midpoint dofs on fixed edges
     D = _clamped_dof_array(vec_basis, mesh)
 
+    # Fix 1: guard against n_free < 2 or k < 1
     n_free = K.shape[0] - len(D)
+    if n_free < 2:
+        return [], [], {}
     k = min(n_modes, n_free - 1)
     if k < 1:
         return [], [], {}
@@ -130,7 +226,7 @@ def modal(mesh: FemMesh, E: float, nu: float, rho: float, t: float,
     freqs = [math.sqrt(abs(float(lv))) / (2.0 * math.pi)
              for lv in np.atleast_1d(ls)]
 
-    # Build dof_of: node index -> base offset in the free-dof vector
+    # Build dof_of: node index -> base offset in the free-vertex-dof vector
     vd = vec_basis.nodal_dofs   # (2, n_vertices)
     n_verts = vd.shape[1]
     dof_of: Dict[int, int] = {}
@@ -144,15 +240,40 @@ def modal(mesh: FemMesh, E: float, nu: float, rho: float, t: float,
             free_pairs.append((int(vd[0, n]), int(vd[1, n])))
             base += 2
 
-    # Extract mode vectors: map global dofs through xs
-    vecs: List[List[float]] = []
+    # Extract raw vertex-only mode vectors (stripped of P2 midside dofs)
+    raw_vecs: List[np.ndarray] = []
     for col in range(len(freqs)):
-        full = xs[:, col] if xs.ndim == 2 else xs
-        v: List[float] = []
-        for (ix, iy) in free_pairs:
-            v.append(float(full[ix]))
-            v.append(float(full[iy]))
-        vecs.append(v)
+        full_p2 = xs[:, col] if xs.ndim == 2 else xs
+        v = np.empty(len(free_pairs) * 2)
+        for idx, (ix, iy) in enumerate(free_pairs):
+            v[2 * idx]     = float(full_p2[ix])
+            v[2 * idx + 1] = float(full_p2[iy])
+        raw_vecs.append(v)
+
+    # Fix 2: M-normalise in P1 vertex-mass metric
+    p1_vec_basis, M1 = _build_p1_mass(mesh, rho, t)
+    vd1 = p1_vec_basis.nodal_dofs   # (2, n_vertices) — same node ordering
+    n_p1_dofs = 2 * n_verts
+
+    vecs: List[List[float]] = []
+    for raw in raw_vecs:
+        # Lift stripped vector back to full P1 displacement (fixed dofs = 0)
+        full_p1 = np.zeros(n_p1_dofs)
+        for idx, (n, (ix, iy)) in enumerate(
+                [(n, free_pairs[j]) for j, n in enumerate(
+                    [ni for ni in range(n_verts) if ni not in mesh.fixed]
+                )]):
+            p1_ix = int(vd1[0, n])
+            p1_iy = int(vd1[1, n])
+            full_p1[p1_ix] = raw[2 * idx]
+            full_p1[p1_iy] = raw[2 * idx + 1]
+
+        s = math.sqrt(float(full_p1 @ M1 @ full_p1))
+        if s > 0.0:
+            normalised = raw / s
+        else:
+            normalised = raw
+        vecs.append(normalised.tolist())
 
     return freqs, vecs, dof_of
 

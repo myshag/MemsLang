@@ -1,9 +1,12 @@
 import math
 
+import numpy as np
+
 from soidlc.fem.result import FemMesh, FemResult
 from soidlc import geometry as G
 from soidlc.fem import mesh_build
 from soidlc.fem import skfem_solve
+from soidlc.fem.skfem_solve import _build_p1_mass
 
 
 def _rect_shape(x0, y0, w, h, **kw):
@@ -97,3 +100,65 @@ def test_modal_cantilever_matches_euler():
     tip = max(range(len(m.nodes)), key=lambda n: m.nodes[n][0])
     b = dof_of[tip]
     assert b >= 0 and abs(vecs[0][b + 1]) > 0.0
+
+
+def test_modal_all_fixed_returns_empty():
+    """A mesh where every node is anchored must return empty (not crash)."""
+    m = FemMesh(
+        nodes=[(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)],
+        cells=[(0, 1, 2)],
+        fixed={0, 1, 2},
+        fill=[1.0],
+        extra_mass=[],
+    )
+    E, nu, rho, t = 170.0e9, 0.28, 2330.0, 10.0e-6
+    freqs, vecs, dof_of = skfem_solve.modal(m, E, nu, rho, t, n_modes=3)
+    assert freqs == [] and vecs == [] and dof_of == {}
+
+
+def test_modal_m1_normalised():
+    """Mode-1 vector, lifted to full P1 vertex space, must satisfy v^T M1 v ≈ 1."""
+    body = _rect_shape(0.0, 0.0, 100.0, 10.0)
+    anchor = _rect_shape(0.0, 0.0, 2.0, 10.0, mech="anchored")
+    m = mesh_build.build_mesh([body, anchor], h=2.0)
+    E, nu, rho, t = 170.0e9, 0.28, 2330.0, 10.0e-6
+    freqs, vecs, dof_of = skfem_solve.modal(m, E, nu, rho, t, n_modes=1)
+
+    p1_vec_basis, M1 = _build_p1_mass(m, rho, t)
+    vd1 = p1_vec_basis.nodal_dofs
+    n_verts = len(m.nodes)
+    free_nodes = [ni for ni in range(n_verts) if ni not in m.fixed]
+
+    full_p1 = np.zeros(2 * n_verts)
+    raw = vecs[0]
+    for idx, n in enumerate(free_nodes):
+        full_p1[int(vd1[0, n])] = raw[2 * idx]
+        full_p1[int(vd1[1, n])] = raw[2 * idx + 1]
+
+    norm_sq = float(full_p1 @ M1 @ full_p1)
+    assert 0.9 < norm_sq < 1.1, f"v^T M1 v = {norm_sq:.4f}, expected ≈ 1.0"
+
+
+def test_modal_extra_mass_lowers_freq():
+    """Adding a large lumped mass at a free node must lower the first frequency."""
+    body = _rect_shape(0.0, 0.0, 100.0, 10.0)
+    anchor = _rect_shape(0.0, 0.0, 2.0, 10.0, mech="anchored")
+    m_base = mesh_build.build_mesh([body, anchor], h=5.0)
+    E, nu, rho, t = 170.0e9, 0.28, 2330.0, 10.0e-6
+
+    freqs_base, _, _ = skfem_solve.modal(m_base, E, nu, rho, t, n_modes=1)
+
+    tip = max(range(len(m_base.nodes)), key=lambda n: m_base.nodes[n][0])
+    m_heavy = FemMesh(
+        nodes=m_base.nodes,
+        cells=m_base.cells,
+        fixed=m_base.fixed,
+        fill=m_base.fill,
+        extra_mass=[(tip, 1.0e7)],   # 1e7 um^2 — very large lumped mass
+    )
+    freqs_heavy, _, _ = skfem_solve.modal(m_heavy, E, nu, rho, t, n_modes=1)
+
+    assert freqs_heavy[0] < freqs_base[0], (
+        f"extra_mass should lower freq: {freqs_heavy[0]/1e6:.4f} MHz vs "
+        f"baseline {freqs_base[0]/1e6:.4f} MHz"
+    )
