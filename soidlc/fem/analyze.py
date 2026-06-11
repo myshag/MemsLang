@@ -26,7 +26,8 @@ def analyze(elab, art, h: float = 12.0,
         if mesh.n_cells > MAX_ELEMENTS:
             art.warnings.append(
                 f"fem: island #{cid} has {mesh.n_cells} elements "
-                f"(> {MAX_ELEMENTS}); increase --fem-h")
+                f"(> {MAX_ELEMENTS}); raise --fem-h to coarsen bulk regions "
+                f"(narrow flexures stay fine-meshed for accuracy)")
             continue
         freqs, vecs, dof_of = modal(mesh, E, nu, rho, t, n_modes=3)
         art.report.append(

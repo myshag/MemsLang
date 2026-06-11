@@ -146,8 +146,13 @@ def _mark_fixed(mesh: FemMesh, shapes: List[G.Shape]) -> None:
     tol = 1e-6
     for n, (px, py) in enumerate(mesh.nodes):
         for poly, (x0, y0, x1, y1) in zip(anchored, anchor_bboxes):
-            if (x0 - tol <= px <= x1 + tol
+            if not (x0 - tol <= px <= x1 + tol
                     and y0 - tol <= py <= y1 + tol):
+                continue
+            # bbox is exact for rectangular anchors (and catches boundary
+            # nodes the ray-cast misses); ray-cast handles the rare
+            # non-rectangular anchor.
+            if len(poly.exterior) == 4 or _point_in_ring(px, py, poly.exterior):
                 mesh.fixed.add(n)
                 break
 
