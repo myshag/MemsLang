@@ -1,5 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
+import { EditorView } from '@codemirror/view'
+
+const CM_EXTENSIONS = [EditorView.lineWrapping]
 
 export default function EditorPanel({ name, onBundle }) {
   const [source, setSource] = useState('')
@@ -37,9 +40,11 @@ export default function EditorPanel({ name, onBundle }) {
         {busy ? 'compiling…' : 'Compile ⌘⏎'}
       </button>
     </div>
-    <div style={{flex:1, minHeight:0, overflow:'auto', border:'1px solid #333'}}>
+    <div style={{flex:1, minHeight:0, overflow:'auto', border:'1px solid #333',
+                 fontSize:13}}>
       <CodeMirror value={source} onChange={setSource} theme="dark"
-        height="100%" basicSetup={{ lineNumbers: true, foldGutter: false }}/>
+        height="100%" extensions={CM_EXTENSIONS}
+        basicSetup={{ lineNumbers: true, foldGutter: false }}/>
     </div>
     {error && <pre style={{color:'#f66', whiteSpace:'pre-wrap', maxHeight:120,
       overflow:'auto', margin:'6px 0 0', fontSize:12}}>{error}</pre>}

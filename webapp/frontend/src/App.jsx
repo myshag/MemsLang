@@ -16,8 +16,24 @@ export default function App() {
   const [active, setActive] = useState(-1)
   const [settings, setSettings] = useState(DEFAULTS)
   const [showEditor, setShowEditor] = useState(false)
+  // editor width in px, user-resizable via the drag divider
+  const [editorWidth, setEditorWidth] = useState(
+    () => Math.max(420, Math.round(window.innerWidth * 0.38)))
 
   const handleBundle = useCallback((b) => { setBundle(b); setActive(-1) }, [])
+
+  const startDrag = useCallback((e) => {
+    e.preventDefault()
+    const x0 = e.clientX, w0 = editorWidth
+    const move = (ev) => setEditorWidth(Math.min(
+      Math.max(320, w0 + ev.clientX - x0), window.innerWidth - 500))
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }, [editorWidth])
 
   // retry the examples fetch until the backend is reachable (it may still
   // be starting up), and surface the failure instead of an empty selector
@@ -54,14 +70,17 @@ export default function App() {
       {loading && <span>compiling…</span>}
       {error && <span style={{color:'#f66'}}>{error}</span>}
     </div>
-    <div style={{display:'grid', gridTemplateColumns: showEditor ? '240px minmax(280px, 1fr) 2fr' : '240px 1fr', minHeight:0}}>
+    <div style={{display:'grid', gridTemplateColumns: showEditor ? `240px ${editorWidth}px 6px 1fr` : '240px 1fr', minHeight:0}}>
       <div style={{padding:8, overflow:'auto'}}>
         {bundle && <ResultPanel results={bundle.results} active={active} onSelect={setActive}/>}
         {bundle && <Legend layers={bundle.meta.layers}/>}
       </div>
-      {showEditor && <div style={{minHeight:0, padding:'0 8px'}}>
+      {showEditor && <div style={{minHeight:0, padding:'0 0 0 8px'}}>
         <EditorPanel name={name} onBundle={handleBundle}/>
       </div>}
+      {showEditor && <div onPointerDown={startDrag}
+        style={{cursor:'col-resize', background:'#2a2d36', borderRadius:3,
+                margin:'4px 1px', touchAction:'none'}}/>}
       <div style={{minHeight:0}}>
         {bundle && <DeviceCanvas bundle={bundle} result={result} settings={settings}/>}
       </div>
