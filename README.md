@@ -374,6 +374,30 @@ ways geometry degrades, each just another rotation of the sampled table
 (Stereographic R(n) in the wafer frame: misalignment **rotates** the {111}
 cusps under the mask, the miscut **shifts** them off-centre.)
 
+### Thin masking film with finite selectivity
+
+The default 3D etch treats the mask as a perfect, infinitely thick guard
+(the whole masked column is protected). `simulate_3d(..., film_mask=True)`
+instead models the real situation: a thin masking **film** (thickness
+`mask_thick`) that is itself slowly etched, at the vertical rate divided by
+`recipe.selectivity`. The film is kept out of `phi` (which is just the
+silicon); a per-column thickness field protects each column's top while it
+lasts and is returned in `WetResult3D.film`. So the film is a *finite resource*:
+
+```
+film mask in the bath, 2 um film:
+  sel=50, 200 steps:  film 1.59 um left,  Si top intact      (mask holds)
+  sel= 8, 200 steps:  film consumed,      Si top etched 4.2 um (mask FAILS)
+```
+
+Once the film is gone the silicon underneath is exposed and etches — exactly
+how a real oxide/nitride mask is eventually undercut/eroded in a long KOH etch.
+Silicon is also undercut laterally from the opening edges (the released-membrane
+regime). *Limitation:* this single-`phi` model does not reproduce the
+inclined-{111} self-limiting that spares a perfectly ⟨110⟩-aligned edge —
+faithful mask-edge undercut needs explicit facet tracking, which the lookup
+kernel here does not do.
+
 ## Supported SOIDL subset (v0.1)
 
 Implemented: `process { stack / masks / rules }`, `component(params) { port,

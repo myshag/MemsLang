@@ -75,6 +75,12 @@ def _load():
             ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double,
             ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_int,
             ctypes.c_double, ctypes.c_int, ctypes.c_double, ctypes.c_int]
+        lib.wet_run_3d_film.restype = None
+        lib.wet_run_3d_film.argtypes = [
+            ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_double, ctypes.POINTER(ctypes.c_double),
+            ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_double),
+            ctypes.c_double, ctypes.c_int, ctypes.c_double, ctypes.c_int]
         lib._wet_set = True
     return lib
 
@@ -87,13 +93,22 @@ class WetResult3D:
     nz: int
     dx: float
     j0: int
+    film: Optional[List[float]] = None     # remaining film thickness per column
+
+    def film_at(self, x: float, y: float) -> float:
+        if self.film is None:
+            return 0.0
+        ix = min(self.nx - 1, max(0, int(x / self.dx)))
+        jy = min(self.ny - 1, max(0, int(y / self.dx)))
+        return self.film[ix + self.nx * jy]
 
 
 def simulate_3d(mask_open, domain_w: float, domain_h: float, depth: float,
                 dx: float = 0.5, recipe: Optional[WetEtch] = None,
                 mask_thick: float = 1.0, diagram=None,
                 orientation: str = "100", misalign_deg: float = 0.0,
-                miscut_deg: float = 0.0, miscut_az: float = 0.0) -> WetResult3D:
+                miscut_deg: float = 0.0, miscut_az: float = 0.0,
+                film_mask: bool = False) -> WetResult3D:
     """3D anisotropic etch.  ``mask_open(x, y) -> bool`` is the mask opening
     over the (domain_w x domain_h) wafer surface (um).
 
@@ -102,7 +117,18 @@ def simulate_3d(mask_open, domain_w: float, domain_h: float, depth: float,
     ``orientation`` of "100"/"110"/"111") to drive it from a calibrated,
     measured anisotropy map sampled into a lookup table instead.
     ``misalign_deg`` turns the mask off the wafer flat (<110>); ``miscut_deg``/
-    ``miscut_az`` tilt the surface off the ideal pole (an off-axis wafer)."""
+    ``miscut_az`` tilt the surface off the ideal pole (an off-axis wafer).
+
+    ``film_mask`` switches from the default whole-column protection to a thin
+    masking film (thickness ``mask_thick``) of finite ``recipe.selectivity``:
+    the film alone is the slow-etching guard.  It protects the silicon top while
+    it lasts, thins at the vertical rate / selectivity, and once consumed the
+    silicon is exposed and etches (mask failure) -- the result carries the
+    remaining film thickness per column (``WetResult3D.film``).  Silicon is also
+    undercut laterally from the opening edges (the released-membrane regime);
+    note this single-field model does not reproduce the inclined-{111}
+    self-limiting that spares a perfectly <110>-aligned edge -- that needs
+    explicit facet tracking."""
     recipe = recipe or WetEtch()
     nx = max(8, int(round(domain_w / dx)))
     ny = max(8, int(round(domain_h / dx)))
@@ -110,31 +136,48 @@ def simulate_3d(mask_open, domain_w: float, domain_h: float, depth: float,
     j0 = int(round((mask_thick + 2 * dx) / dx))
     mt = int(round(mask_thick / dx))
     n = nx * ny * nz
-    phi = (ctypes.c_double * n)()
-    mask = bytearray(n)
-    for k in range(nz):
-        for jy in range(ny):
-            for ix in range(nx):
-                x, y = (ix + 0.5) * dx, (jy + 0.5) * dx
-                opn = mask_open(x, y)
-                surf = j0 if opn else (j0 - mt)
-                idx = ix + nx * (jy + ny * k)
-                phi[idx] = (surf - k) * dx
-                # protect the whole silicon column under the mask, not just
-                # the thin mask layer: the velocity band reaches several cells
-                # below the surface and would otherwise break through
-                if not opn and k >= (j0 - mt):
-                    mask[idx] = 1
     lib = _load()
     if lib is None:
         raise RuntimeError("3D wet etch requires the compiled C core")
-    mk = (ctypes.c_ubyte * n).from_buffer_copy(bytes(mask))
+    tab = None
     if diagram is not None:
         from . import crystal_rates as _cr
         ntheta, nphi = 90, 180
         tab_list, _rmax = _cr.sample_table(diagram, orientation, ntheta, nphi,
                                            misalign_deg, miscut_deg, miscut_az)
         tab = (ctypes.c_double * len(tab_list))(*tab_list)
+
+    if film_mask:
+        if tab is None:
+            raise ValueError("film_mask requires a crystal_rates diagram")
+        # silicon only: flat top at j0 (phi>0 = etchant/air above, <0 = Si).
+        # the mask lives in a separate per-column thickness field mfilm.
+        phi = (ctypes.c_double * n)()
+        mfilm = (ctypes.c_double * (nx * ny))()
+        for jy in range(ny):
+            for ix in range(nx):
+                opn = mask_open((ix + 0.5) * dx, (jy + 0.5) * dx)
+                mfilm[ix + nx * jy] = 0.0 if opn else mask_thick
+                for k in range(nz):
+                    phi[ix + nx * (jy + ny * k)] = (j0 - k) * dx
+        lib.wet_run_3d_film(phi, nx, ny, nz, dx, tab, ntheta, nphi, mfilm,
+                            recipe.selectivity, recipe.steps, 0.30 * dx, 2)
+        return WetResult3D(list(phi), nx, ny, nz, dx, j0, list(mfilm))
+
+    # solid mask carved into phi (default whole-column protection)
+    phi = (ctypes.c_double * n)()
+    mask = bytearray(n)
+    for k in range(nz):
+        for jy in range(ny):
+            for ix in range(nx):
+                opn = mask_open((ix + 0.5) * dx, (jy + 0.5) * dx)
+                surf = j0 if opn else (j0 - mt)
+                idx = ix + nx * (jy + ny * k)
+                phi[idx] = (surf - k) * dx
+                if not opn and k >= (j0 - mt):
+                    mask[idx] = 1
+    mk = (ctypes.c_ubyte * n).from_buffer_copy(bytes(mask))
+    if tab is not None:
         lib.wet_run_3d_tab(phi, mk, nx, ny, nz, dx, tab, ntheta, nphi,
                            recipe.selectivity, recipe.steps, 0.30 * dx, 2)
     else:

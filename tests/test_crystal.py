@@ -140,5 +140,48 @@ class TestMisalignAndMiscut(unittest.TestCase):
                            2.0 * self._floor_width(aligned, 30))
 
 
+class TestFilmMask(unittest.TestCase):
+    """A thin masking film of finite selectivity: it protects the silicon top
+    while it lasts, thins at the vertical rate / selectivity, and once consumed
+    the silicon is exposed and etches (mask failure)."""
+    def _top(self, res, x, y):
+        nx, ny, nz, dx, j0 = res.nx, res.ny, res.nz, res.dx, res.j0
+        ix, jy = int(x / dx), int(y / dx)
+        kd = j0
+        for k in range(j0, nz):
+            if res.phi[ix + nx * (jy + ny * k)] > 0.3 * dx:
+                kd = k
+        return (kd - j0) * dx
+
+    def _run(self, sel, steps, thick=2.0):
+        from soidlc import koh
+        d = CR.RateDiagram.from_condition("KOH_30_70")
+        return koh.simulate_3d(lambda x, y: False, 40, 40, 20, dx=0.6,
+                               diagram=d, orientation="100", mask_thick=thick,
+                               film_mask=True, recipe=koh.WetEtch(
+                                   steps=steps, selectivity=sel))
+
+    def test_high_selectivity_film_holds(self):
+        r = self._run(sel=50, steps=200)
+        self.assertGreater(r.film_at(20, 20), 0.0)        # film survives
+        self.assertLess(self._top(r, 20, 20), 0.6)        # silicon intact
+
+    def test_low_selectivity_mask_fails(self):
+        r = self._run(sel=8, steps=300)
+        self.assertEqual(r.film_at(20, 20), 0.0)          # film consumed
+        self.assertGreater(self._top(r, 20, 20), 2.0)     # silicon now etched
+
+    def test_film_thins_more_at_lower_selectivity(self):
+        hi = self._run(sel=80, steps=150)
+        lo = self._run(sel=20, steps=150)
+        self.assertGreater(hi.film_at(20, 20), lo.film_at(20, 20))
+
+    def test_film_mask_requires_diagram(self):
+        from soidlc import koh
+        with self.assertRaises(ValueError):
+            koh.simulate_3d(lambda x, y: False, 30, 30, 16, dx=0.8,
+                            film_mask=True)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
