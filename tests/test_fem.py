@@ -162,3 +162,21 @@ def test_modal_extra_mass_lowers_freq():
         f"extra_mass should lower freq: {freqs_heavy[0]/1e6:.4f} MHz vs "
         f"baseline {freqs_base[0]/1e6:.4f} MHz"
     )
+
+
+def test_static_cantilever_tip_load():
+    # clamped beam, line force at the tip; Euler-Bernoulli tip deflection
+    # uses per-unit-thickness area moment I = H^3/12 (forces are N/m).
+    body = _rect_shape(0.0, 0.0, 100.0, 10.0)
+    anchor = _rect_shape(0.0, 0.0, 2.0, 10.0, mech="anchored")
+    m = mesh_build.build_mesh([body, anchor], h=2.0)
+    E, nu, t = 170.0e9, 0.28, 10.0e-6
+    tip = max(range(len(m.nodes)), key=lambda n: m.nodes[n][0])
+    F_line = 1.0  # N/m (per unit thickness)
+    disp = skfem_solve.static_solve(m, E, nu, t, forces={tip: (0.0, -F_line)})
+
+    L, H = 100e-6, 10e-6
+    I = (H ** 3) / 12.0
+    y_analytic = F_line * L ** 3 / (3 * E * I)
+    uy = abs(disp[tip][1])
+    assert 0.5 * y_analytic < uy < 1.6 * y_analytic
