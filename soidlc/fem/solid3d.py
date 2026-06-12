@@ -232,7 +232,10 @@ def modal3d(mesh: Solid3DMesh,
     E       : Young's modulus [Pa].
     nu      : Poisson's ratio [-].
     rho     : density [kg/m³].
-    t       : thickness [m]  (used for lumped mass: rho * t * area_um2 * 1e-12).
+    t       : thickness [m]  — used for lumped masses in BOTH the eigen mass M
+              and the P1 normalisation matrix M1: rho * t * area_um2 * 1e-12 [kg].
+              Both matrices are kg-metric (3-D volume integral), so the formula
+              is consistent in both places.
     n_modes : number of modes to extract.
 
     Returns
@@ -283,14 +286,20 @@ def modal3d(mesh: Solid3DMesh,
 
     M = mass_form.assemble(basis)
 
-    # Note: unlike the 2D solver, we do NOT add lumped finger masses to the P2
-    # eigen mass matrix M here.  In 2D, the mass matrix integrates over area
-    # (units kg/m) and the formula rho*t*area is effectively zero relative to the
-    # matrix entries.  In 3D, M integrates over volume (units kg), so the same
-    # formula would introduce O(1)–O(100)× perturbations to individual diagonal
-    # entries, severely distorting eigenfrequencies.  Finger masses ARE included
-    # in the P1 normalisation mass M1 below so that M-normalised mode vectors
-    # carry the correct effective-mass scaling.
+    # Add lumped finger masses to the 3-D eigen mass matrix.
+    # The 3-D mass matrix integrates rho * u·v over volume (units: kg).
+    # The matching lump is rho * t * area_um2 * 1e-12 [kg] — the same formula
+    # as the P1 normalisation matrix below.  Both matrices are kg-metric, so
+    # the lump is added to both consistently.
+    if mesh.extra_mass:
+        M = M.tolil()
+        vd_eigen = basis.nodal_dofs   # (3, n_vertices)
+        for node_idx, area_um2 in mesh.extra_mass:
+            m_lump = rho * t * (area_um2 * 1.0e-12)   # kg
+            for comp in range(3):
+                d = int(vd_eigen[comp, node_idx])
+                M[d, d] += m_lump
+        M = M.tocsr()
 
     # Clamp fixed nodes and edge-midside dofs — mirror of 2D _clamped_dof_array.
     # Rule: clamp all 3 dofs of each fixed vertex, plus all 3 dofs of edge

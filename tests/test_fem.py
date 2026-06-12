@@ -140,7 +140,14 @@ def test_modal_m1_normalised():
 
 
 def test_modal_extra_mass_lowers_freq():
-    """Adding a large lumped mass at a free node must lower the first frequency."""
+    """Adding a physically plausible lumped mass at a free node must lower
+    the first frequency by more than 1%.
+
+    With corrected units (kg/m lump in the 2D eigen matrix), a realistically
+    sized mass (2e5 um^2 ≈ a ~450um × 450um plate at rho=2330, t=10um gives
+    ~2.4 ng — comparable to the beam mass) produces a visible frequency shift
+    even without an absurdly large blob.
+    """
     body = _rect_shape(0.0, 0.0, 100.0, 10.0)
     anchor = _rect_shape(0.0, 0.0, 2.0, 10.0, mech="anchored")
     m_base = mesh_build.build_mesh([body, anchor], h=5.0)
@@ -154,13 +161,17 @@ def test_modal_extra_mass_lowers_freq():
         cells=m_base.cells,
         fixed=m_base.fixed,
         fill=m_base.fill,
-        extra_mass=[(tip, 1.0e7)],   # 1e7 um^2 — very large lumped mass
+        extra_mass=[(tip, 2.0e5)],   # 2e5 um^2 — physically plausible large mass
     )
     freqs_heavy, _, _ = skfem_solve.modal(m_heavy, E, nu, rho, t, n_modes=1)
 
     assert freqs_heavy[0] < freqs_base[0], (
         f"extra_mass should lower freq: {freqs_heavy[0]/1e6:.4f} MHz vs "
         f"baseline {freqs_base[0]/1e6:.4f} MHz"
+    )
+    drop = (freqs_base[0] - freqs_heavy[0]) / freqs_base[0]
+    assert drop > 0.01, (
+        f"frequency drop should exceed 1% with 2e5 um^2 mass; got {drop*100:.2f}%"
     )
 
 
@@ -223,15 +234,25 @@ def test_solid3d_cantilever_modes():
 
 
 def test_solid3d_comb_island_finds_oop_modes():
-    from soidlc.fem import solid3d
+    from soidlc.fem import solid3d, mesh_build as fem_build, skfem_solve as fem2d
     from soidlc.webbundle import _compile, _suspended_islands
     elab, result, mesh = _compile("examples/comb_resonator.soidl")
     _cid, ss = _suspended_islands(elab)[0]
     dev = elab.process.device()
+    t = dev.thickness * 1e-6
+
+    # Reference: live 2D frequency with the same physics (corrected lump)
+    fm2d = fem_build.build_mesh(ss, 12.0)
+    freqs_2d, _, _ = fem2d.modal(fm2d, dev.E, dev.nu, dev.rho, t, n_modes=1)
+    f2d_ref = freqs_2d[0]
+
+    # 3D must agree with the 2D reference within 2% — both solvers now carry
+    # the same physics (finger lumps in the eigen mass matrix).
     m3 = solid3d.mesh_island_3d(ss, thickness_um=dev.thickness, h=10.0)
     freqs, vecs, dof_of = solid3d.modal3d(m3, dev.E, dev.nu, dev.rho,
-                                          dev.thickness * 1e-6, n_modes=6)
-    assert abs(freqs[0] - 21.49e3) / 21.49e3 < 0.02, (
-        f"mode-1 {freqs[0]/1e3:.2f} kHz vs expected 21.49 kHz")
+                                          t, n_modes=6)
+    assert abs(freqs[0] - f2d_ref) / f2d_ref < 0.02, (
+        f"mode-1 3D={freqs[0]/1e3:.2f} kHz vs 2D ref={f2d_ref/1e3:.2f} kHz "
+        f"(delta > 2%)")
     assert any(50e3 < f < 420e3 for f in freqs), (
         f"no out-of-plane mode found; modes={[f/1e3 for f in freqs]}")

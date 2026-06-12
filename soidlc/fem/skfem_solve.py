@@ -185,7 +185,10 @@ def modal(mesh: FemMesh, E: float, nu: float, rho: float, t: float,
     E:      Young's modulus [Pa].
     nu:     Poisson's ratio [-].
     rho:    density [kg/m³].
-    t:      out-of-plane thickness [m] — used for lumped extra_mass [kg].
+    t:      out-of-plane thickness [m] — used ONLY for the kg-metric P1
+            normalisation matrix M1 (rho*t*area gives kg there).  The
+            eigen mass matrix M is per-unit-thickness (kg/m); its lumped
+            finger masses are rho*area_um2*1e-12 [kg/m] — no t factor.
     n_modes: number of eigenfrequencies to extract.
 
     Returns
@@ -203,16 +206,23 @@ def modal(mesh: FemMesh, E: float, nu: float, rho: float, t: float,
 
     vec_basis, K, M = _assemble(mesh, E, nu, rho)
 
-    # Fix 3: add lumped extra_mass to the P2 mass matrix
+    # Add lumped extra_mass to the P2 eigen mass matrix.
+    # The 2-D plane-stress mass matrix integrates rho * fill * u·v over area
+    # (units: kg/m — mass per unit out-of-plane thickness).  The matching lump
+    # is therefore rho * area_um2 * 1e-12 [kg/m]; the thickness t cancels
+    # exactly as it does everywhere else in the plane-stress eigenproblem.
+    # Do NOT include t here — that would underweight the finger mass by the
+    # factor t (~25e-6) and make comb fingers numerically invisible.
+    # (t IS used in _build_p1_mass for the kg-metric normalisation matrix M1.)
     if mesh.extra_mass:
         M = M.tolil()
         vd = vec_basis.nodal_dofs   # (2, n_vertices)
         for node, area_um2 in mesh.extra_mass:
-            m_lump = rho * t * (area_um2 * 1e-12)   # [kg]
+            m_per_t = rho * (area_um2 * 1e-12)   # [kg/m] — per-unit-thickness
             ix = int(vd[0, node])
             iy = int(vd[1, node])
-            M[ix, ix] += m_lump
-            M[iy, iy] += m_lump
+            M[ix, ix] += m_per_t
+            M[iy, iy] += m_per_t
         M = M.tocsr()
 
     # Fix 1: clamp P2 vertex dofs AND edge-midpoint dofs on fixed edges
