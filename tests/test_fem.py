@@ -193,3 +193,45 @@ def test_plot_modes_triangles(tmp_path):
     out = str(tmp_path / "modes.png")
     femplot.plot_modes(m, freqs, vecs, dof_of, out)
     assert os.path.exists(out) and os.path.getsize(out) > 0
+
+
+# ---------------------------------------------------------------------------
+# 3-D tetrahedral solver tests
+# ---------------------------------------------------------------------------
+
+def test_solid3d_cantilever_modes():
+    from soidlc.fem import solid3d
+    body   = _rect_shape(0.0, 0.0, 100.0, 10.0)
+    anchor = _rect_shape(0.0, 0.0, 2.0, 10.0, mech="anchored")
+    m3 = solid3d.mesh_island_3d([body, anchor], thickness_um=25.0, h=4.0)
+    freqs, vecs, dof_of = solid3d.modal3d(m3, 170e9, 0.28, 2330.0, 25e-6,
+                                          n_modes=4)
+    # Euler-Bernoulli analytic frequencies for cantilever L=100um
+    # in-plane bend: H=10um section
+    f_ip = (1.8751**2 / (2 * math.pi) *
+            math.sqrt(170e9 * (10e-6)**2 / 12 / 2330.0 / (100e-6)**4))
+    # out-of-plane bend: H=25um section (thickness)
+    f_op = (1.8751**2 / (2 * math.pi) *
+            math.sqrt(170e9 * (25e-6)**2 / 12 / 2330.0 / (100e-6)**4))
+    assert abs(freqs[0] - f_ip) / f_ip < 0.03, (
+        f"mode-1 {freqs[0]/1e3:.1f} kHz vs analytic {f_ip/1e3:.1f} kHz")
+    assert any(abs(f - f_op) / f_op < 0.08 for f in freqs[1:]), (
+        f"no mode within 8% of f_op={f_op/1e3:.1f} kHz; got {[f/1e3 for f in freqs]}")
+    # 3-component displacement contract: base+2 is the third (uz) component
+    free = [n for n, b in dof_of.items() if b >= 0][0]
+    assert len(vecs[0]) >= dof_of[free] + 3
+
+
+def test_solid3d_comb_island_finds_oop_modes():
+    from soidlc.fem import solid3d
+    from soidlc.webbundle import _compile, _suspended_islands
+    elab, result, mesh = _compile("examples/comb_resonator.soidl")
+    _cid, ss = _suspended_islands(elab)[0]
+    dev = elab.process.device()
+    m3 = solid3d.mesh_island_3d(ss, thickness_um=dev.thickness, h=10.0)
+    freqs, vecs, dof_of = solid3d.modal3d(m3, dev.E, dev.nu, dev.rho,
+                                          dev.thickness * 1e-6, n_modes=6)
+    assert abs(freqs[0] - 21.49e3) / 21.49e3 < 0.02, (
+        f"mode-1 {freqs[0]/1e3:.2f} kHz vs expected 21.49 kHz")
+    assert any(50e3 < f < 420e3 for f in freqs), (
+        f"no out-of-plane mode found; modes={[f/1e3 for f in freqs]}")
