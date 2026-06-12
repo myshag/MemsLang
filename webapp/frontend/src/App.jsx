@@ -70,17 +70,17 @@ export default function App() {
       {loading && <span>compiling…</span>}
       {error && <span style={{color:'#f66'}}>{error}</span>}
     </div>
-    <div style={{display:'grid', gridTemplateColumns: showEditor ? `240px ${editorWidth}px 6px 1fr` : '240px 1fr', minHeight:0}}>
-      <div style={{padding:8, overflow:'auto'}}>
-        {bundle && <ResultPanel results={bundle.results} active={active} onSelect={setActive}/>}
-        {bundle && <Legend layers={bundle.meta.layers}/>}
-      </div>
+    <div style={{display:'grid', gridTemplateColumns: showEditor ? `${editorWidth}px 6px 240px 1fr` : '240px 1fr', minHeight:0}}>
       {showEditor && <div style={{minHeight:0, padding:'0 0 0 8px'}}>
         <EditorPanel name={name} onBundle={handleBundle}/>
       </div>}
       {showEditor && <div onPointerDown={startDrag}
         style={{cursor:'col-resize', background:'#2a2d36', borderRadius:3,
                 margin:'4px 1px', touchAction:'none'}}/>}
+      <div style={{padding:8, overflow:'auto'}}>
+        {bundle && <ResultPanel results={bundle.results} active={active} onSelect={setActive}/>}
+        {bundle && <Legend layers={bundle.meta.layers}/>}
+      </div>
       <div style={{minHeight:0}}>
         {bundle && <DeviceCanvas bundle={bundle} result={result} settings={settings}/>}
       </div>
