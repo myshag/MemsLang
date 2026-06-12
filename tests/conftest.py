@@ -41,7 +41,7 @@ def _warm_bundle_cache():
 
         path = os.path.join(backend.EXAMPLES, "comb_resonator.soidl")
         mtime = os.path.getmtime(path)
-        b = webbundle.build_bundle(path)
+        b = webbundle.build_bundle(path, n_modes=6)
         backend._BUNDLES["comb_resonator"] = (mtime, b)
     except Exception:
         # If the warm-up fails (e.g. no webapp installed), tests that need

@@ -34,7 +34,7 @@ def _compile(path: str):
         return _compile_source(f.read())
 
 
-def build_bundle_from_source(src: str, n_modes: int = 3,
+def build_bundle_from_source(src: str, n_modes: int = 6,
                              static_cases: Optional[list] = None) -> dict:
     """Compile SOIDL source text and return the web-viewer bundle dict.
 
@@ -87,7 +87,7 @@ def _geometry(mesh, process):
             "vertexLayer": vertex_layer}, meta
 
 
-def build_bundle(path: str, n_modes: int = 3,
+def build_bundle(path: str, n_modes: int = 6,
                  static_cases: Optional[list] = None) -> dict:
     """Compile `path` and return the web-viewer bundle dict."""
     elab, result, mesh = _compile(path)
@@ -96,7 +96,7 @@ def build_bundle(path: str, n_modes: int = 3,
                                       static_cases=static_cases)
 
 
-def build_bundle_from_compiled(elab, result, mesh, n_modes: int = 3,
+def build_bundle_from_compiled(elab, result, mesh, n_modes: int = 6,
                                 static_cases: Optional[list] = None) -> dict:
     """Build the web-viewer bundle from already-compiled artifacts.
 
@@ -160,53 +160,120 @@ def _nearest_disp_batch(verts_xy, femmesh, vec, dof_of, max_dist):
     return results
 
 
+def _nearest_disp_batch_3d(verts_xyz, nodes_shifted, vec, dof_of, max_dist):
+    """Return lists of (ux, uy, uz) for each 3D render vertex using cKDTree.
+
+    ``nodes_shifted`` is the Solid3DMesh node array shifted to process
+    coordinates (z += z0_device), so distances to render vertices are valid.
+    Vertices farther than max_dist from any FEM node get (0.0, 0.0, 0.0).
+    Fixed nodes (dof_of[n] == -1) also return (0.0, 0.0, 0.0).
+    """
+    import numpy as np
+    from scipy.spatial import cKDTree
+
+    qpts = np.array(verts_xyz, dtype=float)   # (V, 3)
+    tree = cKDTree(nodes_shifted)              # (N, 3)
+    dists, idxs = tree.query(qpts, k=1)
+
+    results = []
+    for dist, ni in zip(dists, idxs):
+        if dist > max_dist:
+            results.append((0.0, 0.0, 0.0))
+        else:
+            base = dof_of.get(int(ni), -1)
+            if base >= 0:
+                results.append((float(vec[base]),
+                                float(vec[base + 1]),
+                                float(vec[base + 2])))
+            else:
+                results.append((0.0, 0.0, 0.0))
+    return results
+
+
 def _modal_results(elab, mesh, n_modes, static_mask):
-    """Compute modal displacement results.
+    """Compute modal displacement results using the 3D solid solver.
 
     ``static_mask[v]`` is True for vertices whose layer (BOX or HANDLE) must
     always carry zero displacement; these are zeroed before normalisation so
     the normalisation max is taken over unmasked (moving) vertices only.
+
+    Note: _static_results intentionally remains on the 2D plane-stress path.
     """
     dev = elab.process.device()
     if dev is None:
         return []
-    E, nu, rho, t = dev.E, dev.nu, dev.rho, dev.thickness * 1e-6
-    from . import fem
+    from .fem import solid3d
     verts = mesh.vertices
     islands = _suspended_islands(elab)
+    # z0 of the DEVICE layer in process coordinates (um) — shifts local mesh z
+    z0_device = dev.z0
     out = []
     for cid, ss in islands:
-        fm = fem.build_mesh(ss, 12.0)
-        if not fm.cells or fm.n_cells > fem.MAX_ELEMENTS:
+        try:
+            m3 = solid3d.mesh_island_3d(ss, thickness_um=dev.thickness, h=10.0)
+        except ValueError:
+            # Too many tets or other meshing error — skip this island silently.
             continue
-        freqs, vecs, dof_of = fem.modal(fm, E, nu, rho, t, n_modes=n_modes)
-        xs = [p[0] for p in fm.nodes]
-        ys = [p[1] for p in fm.nodes]
-        max_dist = 0.05 * max(max(xs) - min(xs), max(ys) - min(ys), 1.0) + 12.0
+        if m3.n_tets == 0:
+            continue
+        if m3.n_tets > solid3d.MAX_TETS:
+            continue
+        try:
+            freqs, vecs, dof_of = solid3d.modal3d(
+                m3, dev.E, dev.nu, dev.rho,
+                dev.thickness * 1e-6, n_modes=n_modes)
+        except Exception:
+            continue
+        if not freqs:
+            continue
 
-        # Precompute xy of all 3D vertices for batched KD-tree queries
-        verts_xy = [(vx, vy) for (vx, vy, vz) in verts]
+        # Shift 3D mesh nodes from local z (0..thickness) to process z coords
+        import numpy as np
+        nodes_shifted = m3.nodes.copy()
+        nodes_shifted[:, 2] += z0_device
+
+        # max_dist guard based on island XY bbox (same logic as 2D path)
+        xs = m3.nodes[:, 0]
+        ys = m3.nodes[:, 1]
+        max_dist = 0.05 * max(float(xs.max() - xs.min()),
+                              float(ys.max() - ys.min()), 1.0) + 12.0
+
+        # Query all render vertices in xyz
+        verts_xyz = [(float(vx), float(vy), float(vz)) for (vx, vy, vz) in verts]
 
         for mi, (f, vec) in enumerate(zip(freqs, vecs), 1):
-            raw_ux_uy = _nearest_disp_batch(verts_xy, fm, vec, dof_of, max_dist)
+            raw = _nearest_disp_batch_3d(verts_xyz, nodes_shifted,
+                                         vec, dof_of, max_dist)
             disp = []
             mags = []
-            for v, (ux, uy) in enumerate(raw_ux_uy):
+            for v, (ux, uy, uz) in enumerate(raw):
                 if static_mask[v]:
                     disp.extend((0.0, 0.0, 0.0))
                     mags.append(0.0)
                 else:
-                    disp.extend((ux, uy, 0.0))
-                    mags.append(math.hypot(ux, uy))
+                    disp.extend((ux, uy, uz))
+                    mags.append(math.sqrt(ux*ux + uy*uy + uz*uz))
             # Normalise over unmasked vertices only
             mmax = max(
                 (m for v, m in enumerate(mags) if not static_mask[v]),
                 default=0.0
             ) or 1.0
+
+            # Determine in-plane vs out-of-plane character
+            unmasked_disps = [(disp[3*v], disp[3*v+1], disp[3*v+2])
+                              for v in range(len(static_mask)) if not static_mask[v]]
+            if unmasked_disps:
+                mean_dz = sum(abs(d[2]) for d in unmasked_disps) / len(unmasked_disps)
+                mean_dxy = sum(math.hypot(d[0], d[1]) for d in unmasked_disps) / len(unmasked_disps)
+                oop_suffix = " (out-of-plane)" if mean_dz > mean_dxy else ""
+            else:
+                oop_suffix = ""
+
+            label_base = (f"Island {cid} — Mode {mi}"
+                          if len(islands) > 1 else f"Mode {mi}")
             out.append({
                 "type": "modal",
-                "label": (f"Island {cid} — Mode {mi}" if len(islands) > 1
-                          else f"Mode {mi}"),
+                "label": label_base + oop_suffix,
                 "freq_hz": float(f),
                 "animate": True,
                 "disp": [d / mmax for d in disp],
@@ -217,7 +284,7 @@ def _modal_results(elab, mesh, n_modes, static_mask):
 
 
 def _static_results(elab, mesh, cases, static_mask):
-    """Compute static-load displacement results.
+    """Compute static-load displacement results (intentionally kept on 2D plane-stress path).
 
     Phase 1: static cases apply to the FIRST suspended island only (case node
     indices refer to that island's FEM mesh).  If there are multiple islands
