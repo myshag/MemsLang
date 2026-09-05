@@ -459,5 +459,100 @@ class TestFoldedFlexureFEM(unittest.TestCase):
         self.assertLess(abs(pct), 15.0, cmp[0])
 
 
+
+class TestCompliantFlexures(unittest.TestCase):
+    def _k(self, component):
+        src = TestImportResolution.PROC + f"""
+          import "flexures.soidl";
+          device d {{
+            inst M = plate(300 um, 300 um) at (0, 0);
+            inst S = array({component}, count = 4, place = corners(M));
+            net GND = M | S.fixed;
+            constraint anchored(S.fixed);
+          }}
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        return art.model["k"].value
+
+    def test_more_turns_is_softer(self):
+        k2 = self._k("serpentine(L = 120 um, w = 3 um, n_turns = 2)")
+        k6 = self._k("serpentine(L = 120 um, w = 3 um, n_turns = 6)")
+        self.assertLess(k6, k2)
+        self.assertAlmostEqual(k2 / k6, 3.0, delta=0.2)
+
+    def test_crab_leg_shin_softens_it(self):
+        short = self._k("crab_leg(Lx = 150 um, Ly = 20 um, w = 4 um)")
+        long = self._k("crab_leg(Lx = 150 um, Ly = 120 um, w = 4 um)")
+        self.assertLess(long, short)
+
+    def test_compliant_flexures_do_not_short_their_springs(self):
+        """The folded-flexure lesson, applied to the other two: an anchor that
+        touches the proof mass makes a rigid device that nothing complains
+        about."""
+        from soidlc import connectivity
+        for comp in ("serpentine(L = 120 um, w = 3 um, n_turns = 4)",
+                     "crab_leg(Lx = 150 um, Ly = 60 um, w = 4 um)"):
+            with self.subTest(component=comp):
+                src = TestImportResolution.PROC + f"""
+                  import "flexures.soidl";
+                  device d {{
+                    inst M = plate(300 um, 300 um) at (0, 0);
+                    inst S = array({comp}, count = 4, place = corners(M));
+                    net GND = M | S.fixed;
+                    constraint anchored(S.fixed);
+                  }}
+                """
+                art = compile_source(src)
+                self.assertEqual(art.errors, [], art.errors)
+                dev = [s for s in art.result.shapes if s.layer == "DEVICE"]
+                plate = [s for s in dev if s.label == "plate"][0]
+                shorted = [a for a in dev if a.label == "anchor"
+                           and connectivity.touches(a.polygon, plate.polygon)]
+                self.assertEqual(shorted, [],
+                                 "anchor bolts the proof mass to the substrate")
+
+
+
+class TestSerpentineFEM(unittest.TestCase):
+    """The serpentine's series behaviour, checked on a small probe device.
+
+    low_g_accel itself meshes to ~37k elements (the 3 um spans are kept
+    fine-meshed on purpose), past the solver's 30k guard, so the component is
+    validated on a device small enough to mesh rather than not at all.
+    """
+
+    def test_serpentine_lumped_f0_agrees_with_fem(self):
+        src = TestImportResolution.PROC + """
+          import "flexures.soidl";
+          device s_probe {
+            inst M = plate(200 um, 120 um) at (0, 0);
+            inst S = array(serpentine(L = 150 um, w = 4 um, n_turns = 3),
+                           count = 4, place = corners(M));
+            net GND = M | S.fixed;
+            constraint anchored(S.fixed);
+          }
+        """
+        art = compile_source(src, fem=True, fem_h=10.0)
+        self.assertEqual(art.errors, [], art.errors)
+        cmp = [l for l in art.report
+               if l.startswith("fem") and "vs lumped" in l]
+        self.assertTrue(cmp, art.report)
+        pct = float(cmp[0].rsplit("(", 1)[1].rstrip("%)"))
+        self.assertLess(abs(pct), 15.0, cmp[0])
+
+    def test_meander_is_one_connected_path(self):
+        """The property that makes the parallel-spans short impossible."""
+        from soidlc import primitives as P
+        from soidlc.units import Quantity
+        um = lambda v: Quantity(v * 1e-6, (1, 0, 0, 0))
+        shapes = P.PRIMITIVES["meander"](
+            [], {"L": um(150), "w": um(4), "n_turns": 5, "pitch": um(14)},
+            P.PrimitiveCtx())
+        paths = [s for s in shapes if s.label == "meander"]
+        self.assertEqual(len(paths), 1, "the spring must be a single polygon")
+        self.assertGreater(paths[0].polygon.area(), 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

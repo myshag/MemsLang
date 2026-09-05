@@ -145,6 +145,48 @@ def prim_comb(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
     return out
 
 
+def prim_meander(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
+    """Serpentine spring as ONE continuous folded path.
+
+    Drawn as a single wire rather than a row of beams on purpose.  A meander
+    built from separate spans that all reach into the proof mass puts them in
+    parallel instead of in series, and if the last span is then anchored the
+    mass is bolted to the substrate: one legal electrical island, no LVS
+    complaint, and a resonator an order of magnitude too stiff.  A single path
+    cannot be wired wrong -- only its first point touches the mass.
+
+    Spans run along y at `pitch` intervals; the path alternates between the
+    far and near ends, and always finishes at the far end so its anchor lands
+    well clear of the mass.
+    """
+    L = _um(_arg(args, kwargs, 0, "L", Quantity(120e-6, (1, 0, 0, 0))))
+    w = _um(_arg(args, kwargs, 1, "w", Quantity(3e-6, (1, 0, 0, 0))))
+    n = int(round(_num(_arg(args, kwargs, 2, "n_turns", 4))))
+    pitch = _um(_arg(args, kwargs, 3, "pitch", Quantity(12e-6, (1, 0, 0, 0))))
+    if n < 2:
+        raise ValueError("meander() needs at least 2 turns")
+
+    y_far = 2.0 - L
+    y_near = -6.0          # stops short of the mass edge at y = 0
+
+    pts = [(0.0, 2.0)]     # the only point that reaches into the mass
+    for i in range(n):
+        far = (i % 2 == 0) or (i == n - 1)
+        y = y_far if far else y_near
+        pts.append((i * pitch, y))
+        if i < n - 1:
+            pts.append(((i + 1) * pitch, y))
+
+    shapes = [G.Shape(ctx.device_layer, G.wire(pts, w), "meander",
+                      mech="released")]
+    # anchor caps the far end of the last span, away from the mass
+    shapes.append(G.Shape(
+        ctx.device_layer,
+        G.rect(max(pitch, 16.0), 20.0, (n - 1) * pitch, y_far - 8.0),
+        "anchor", mech="anchored"))
+    return shapes
+
+
 def prim_gap_stop(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
     d = _um(_arg(args, kwargs, 0, "d"))
     return [G.Shape(ctx.device_layer, G.rect(max(d, 2.0), max(d, 2.0)),
@@ -177,6 +219,7 @@ PRIMITIVES = {
     "plate": prim_plate,
     "comb": prim_comb,
     "combdrive": prim_comb,    # combdrive renders its comb geometry
+    "meander": prim_meander,
     "gap_stop": prim_gap_stop,
     "trench": prim_trench,
     "via_metal": prim_via_metal,
