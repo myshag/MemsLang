@@ -93,6 +93,57 @@ def rect(w: float, h: float, cx: float = 0.0, cy: float = 0.0) -> Polygon:
     ])
 
 
+def wire(points: List[Pt], w: float) -> Polygon:
+    """A polyline of width `w` as a closed polygon, with mitred joins.
+
+    The miter is clipped to a bevel once it would reach past 4x the half-width,
+    so a very sharp corner produces a blunt end rather than a spike that
+    self-intersects (which would break the extruder).
+    """
+    pts: List[Pt] = []
+    for p in points:
+        if not pts or (abs(p[0] - pts[-1][0]) > 1e-9
+                       or abs(p[1] - pts[-1][1]) > 1e-9):
+            pts.append((float(p[0]), float(p[1])))
+    if len(pts) < 2:
+        raise ValueError("wire() needs at least two distinct points")
+
+    half = w / 2.0
+
+    def unit(a: Pt, b: Pt) -> Pt:
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L = math.hypot(dx, dy)
+        return (dx / L, dy / L)
+
+    offsets: List[Pt] = []
+    n = len(pts)
+    for i in range(n):
+        if i == 0:
+            d = unit(pts[0], pts[1])
+            offsets.append((-d[1] * half, d[0] * half))
+        elif i == n - 1:
+            d = unit(pts[-2], pts[-1])
+            offsets.append((-d[1] * half, d[0] * half))
+        else:
+            d0 = unit(pts[i - 1], pts[i])
+            d1 = unit(pts[i], pts[i + 1])
+            n0 = (-d0[1], d0[0])
+            n1 = (-d1[1], d1[0])
+            mx, my = n0[0] + n1[0], n0[1] + n1[1]
+            L = math.hypot(mx, my)
+            if L < 1e-12:          # 180-degree reversal: keep the incoming normal
+                offsets.append((n0[0] * half, n0[1] * half))
+                continue
+            mx, my = mx / L, my / L
+            cos_half = mx * n0[0] + my * n0[1]
+            scale = half / max(cos_half, 0.25)     # bevel clip at 4x half-width
+            offsets.append((mx * scale, my * scale))
+
+    left = [(p[0] + o[0], p[1] + o[1]) for p, o in zip(pts, offsets)]
+    right = [(p[0] - o[0], p[1] - o[1]) for p, o in zip(pts, offsets)]
+    return Polygon(left + list(reversed(right))).normalized()
+
+
 def rect_corner(x0: float, y0: float, w: float, h: float) -> Polygon:
     return Polygon([
         (x0, y0), (x0 + w, y0), (x0 + w, y0 + h), (x0, y0 + h),

@@ -120,5 +120,41 @@ def _bbox(art):
     return min(xs), min(ys), max(xs), max(ys)
 
 
+
+class TestWire(unittest.TestCase):
+    def test_straight_wire_is_a_rectangle(self):
+        p = G.wire([(0.0, 0.0), (10.0, 0.0)], 4.0)
+        self.assertAlmostEqual(p.area(), 40.0, places=6)
+        x0, y0, x1, y1 = p.bbox()
+        self.assertAlmostEqual(x0, 0.0, places=6)
+        self.assertAlmostEqual(x1, 10.0, places=6)
+        self.assertAlmostEqual(y0, -2.0, places=6)
+        self.assertAlmostEqual(y1, 2.0, places=6)
+
+    def test_right_angle_wire_is_mitred_not_truncated(self):
+        """A mitred 90-degree corner runs the outer edges out to their crossing.
+
+        Path (0,0)->(10,0)->(10,10) at width 4: the outer offsets meet at
+        (12,-2) and the inner ones at (8,2), so the stroke is the 12x12 box
+        [0,12]x[-2,10] minus the 8x8 notch [0,8]x[2,10]  ->  144 - 64 = 80.
+        A truncated (bevelled) join would cut the outer corner and give less.
+        """
+        p = G.wire([(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], 4.0)
+        self.assertAlmostEqual(p.area(), 80.0, delta=0.01)
+        self.assertAlmostEqual(p.bbox()[2], 12.0, places=6)   # outer miter x
+        self.assertAlmostEqual(p.bbox()[1], -2.0, places=6)   # outer miter y
+
+    def test_sharp_corner_bevel_clip_keeps_the_polygon_bounded(self):
+        """A near-180-degree reversal must not spike off to infinity."""
+        p = G.wire([(0.0, 0.0), (50.0, 0.0), (0.0, 1.0)], 4.0)
+        x0, y0, x1, y1 = p.bbox()
+        self.assertLess(x1, 70.0, "miter spike was not clipped")
+        self.assertGreater(p.area(), 0.0)
+
+    def test_wire_rejects_a_degenerate_path(self):
+        with self.assertRaises(ValueError):
+            G.wire([(0.0, 0.0)], 4.0)
+
+
 if __name__ == "__main__":
     unittest.main()
