@@ -109,10 +109,15 @@ class TestConnectivity(unittest.TestCase):
         return compile_source(src)
 
     def test_examples_have_no_errors(self):
-        for name in ("comb_resonator.soidl", "accelerometer.soidl"):
-            with open(os.path.join(EX, name)) as f:
-                art = compile_source(f.read())
-            self.assertEqual(art.errors, [], f"{name}: {art.errors}")
+        import glob
+        paths = sorted(glob.glob(os.path.join(EX, "*.soidl")))
+        self.assertGreaterEqual(len(paths), 4, "examples went missing")
+        for path in paths:
+            name = os.path.basename(path)
+            with self.subTest(example=name):
+                with open(path) as f:
+                    art = compile_source(f.read())
+                self.assertEqual(art.errors, [], f"{name}: {art.errors}")
 
     def test_nets_map_to_distinct_islands(self):
         with open(os.path.join(EX, "comb_resonator.soidl")) as f:
