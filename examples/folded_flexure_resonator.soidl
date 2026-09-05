@@ -1,0 +1,52 @@
+// Tang-style folded-beam comb resonator.
+//
+// The classic MEMS resonator: a shuttle on four folded flexures, driven and
+// sensed by combs on opposite edges.  The fold is the point -- a straight
+// guided beam has to stretch in order to deflect, so its stiffness (and its
+// resonance) climbs with amplitude; the fold lets the truss absorb that
+// extension, keeping f0 flat over the stroke.
+// Compile:  python -m soidlc.cli examples/folded_flexure_resonator.soidl --fem
+
+import "flexures.soidl";
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 0.52 um; material = Au }
+    layer DEVICE { thickness = 25 um;   material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;    material = SiO2; eps_r = 3.9 }
+    layer HANDLE { thickness = 400 um;  material = Si }
+  }
+
+  masks {
+    mask SOID     -> etch(DEVICE, through)
+    mask PADMETAL -> deposit(METAL)
+  }
+
+  rules {
+    release { undercut = 1.5 um; max_solid_span = 30 um;
+              hole_size = 5 um; hole_pitch = 25 um }
+    drie    { aspect_ratio_max = 20; footing_margin = 1 um }
+  }
+}
+
+device folded_resonator {
+  param f0_target = 18 kHz;
+  param V_drive   = 30 V;
+
+  inst M  = plate(300 um, 300 um) at (0, 0);
+  inst S  = array(folded_flexure(L = 200 um, w = 4 um, n_folds = 2),
+                  count = 4, place = corners(M));
+  inst D1 = combdrive(N = 24) attach (rotor -> M.left);
+  inst D2 = combdrive(N = 24) attach (rotor -> M.right);
+
+  require f_res(M, S) >= 8 kHz;
+
+  net DRIVE = D1.stator;
+  net SENSE = D2.stator;
+  net GND   = M | S.fixed;
+
+  isolate DRIVE from GND by trench;
+  constraint released(M, S);
+  constraint anchored(D1.stator, D2.stator, S.fixed);
+}

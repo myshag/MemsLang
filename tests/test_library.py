@@ -299,5 +299,165 @@ class TestFrame(unittest.TestCase):
                                delta=1.0)
 
 
+
+class TestFoldedFlexure(unittest.TestCase):
+    def _k(self, component):
+        src = TestImportResolution.PROC + f"""
+          import "flexures.soidl";
+          device d {{
+            inst M = plate(200 um, 200 um) at (0, 0);
+            inst S = array({component}, count = 4, place = corners(M));
+            net GND = M | S.fixed;
+            constraint anchored(S.fixed);
+          }}
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        return art.model["k"].value
+
+    def test_folded_is_softer_than_guided_by_the_series_ratio(self):
+        """Two beams in series, but NOT two equal beams.
+
+        The fold's anchor has to stand `gap` clear of the mass edge, so the
+        outboard beam is L - gap - 2 long while the inboard one is L.  Adding
+        compliances gives k_folded/k_guided = L^3 / (L^3 + L_out^3), which is
+        0.63 at the defaults -- softer than a guided beam, but not the 0.5 the
+        equal-length idealisation would predict.  Asserting 0.5 here would
+        force the formula back to a lie the FEM check then has to catch.
+        """
+        L, gap = 200.0, 30.0
+        L_out = L - gap - 2.0
+        expected = L ** 3 / (L ** 3 + L_out ** 3)
+        k_guided = self._k("guided_beam(L = 200 um, w = 4 um, n_beams = 2)")
+        k_folded = self._k("folded_flexure(L = 200 um, w = 4 um, n_folds = 2)")
+        self.assertLess(k_folded, k_guided)
+        self.assertAlmostEqual(k_folded / k_guided, expected, delta=0.02)
+
+    def test_stiffness_scales_with_fold_count(self):
+        k2 = self._k("folded_flexure(L = 200 um, w = 4 um, n_folds = 2)")
+        k4 = self._k("folded_flexure(L = 200 um, w = 4 um, n_folds = 4)")
+        self.assertAlmostEqual(k4 / k2, 2.0, delta=0.05)
+
+    def test_anchor_does_not_short_the_spring(self):
+        """The failure `derive` cannot see, and LVS will not report.
+
+        An anchor wide enough to touch its fold's INBOARD beam (or a tie bar
+        drawn across the folds) turns the flexure into a rigid block while
+        `derive k.x` keeps reporting a compliant spring.  One island is
+        electrically legal, so connectivity passes and the device silently
+        resonates at the wrong frequency.  Each anchor must therefore touch
+        exactly one beam: its own outboard beam.
+        """
+        from soidlc import connectivity
+        src = TestImportResolution.PROC + """
+          import "flexures.soidl";
+          device d {
+            inst S = folded_flexure(L = 200 um, w = 4 um, n_folds = 3)
+                     at (0, 0);
+            net GND = S;
+          }
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        dev = [s for s in art.result.shapes if s.layer == "DEVICE"]
+        anchors = [s for s in dev if s.label == "anchor"]
+        beams = [s for s in dev if s.label == "beam"]
+        self.assertEqual(len(anchors), 3)
+        for a in anchors:
+            touched = [b for b in beams
+                       if connectivity.touches(a.polygon, b.polygon)]
+            self.assertEqual(
+                len(touched), 1,
+                f"anchor at {a.polygon.bbox()} touches {len(touched)} beams; "
+                f"it must touch only its own outboard beam")
+
+
+
+class TestFoldedFlexureGeometry(unittest.TestCase):
+    """Two shorts that no existing check can see.
+
+    Both leave the device with one legal electrical island, so connectivity
+    passes; both leave `derive k.x` reporting a compliant spring while the
+    silicon is rigid.  Each cost a wrong FEM answer during development
+    (192 kHz and 220 kHz against an intended 26 kHz) before being found.
+    """
+
+    SRC = TestImportResolution.PROC + """
+      import "flexures.soidl";
+      device d {
+        inst M = plate(300 um, 300 um) at (0, 0);
+        inst S = array(folded_flexure(L = 200 um, w = 4 um, n_folds = 2),
+                       count = 4, place = corners(M));
+        net GND = M | S.fixed;
+        constraint anchored(S.fixed);
+      }
+    """
+
+    def _shapes(self):
+        art = compile_source(self.SRC)
+        self.assertEqual(art.errors, [], art.errors)
+        return art, [s for s in art.result.shapes if s.layer == "DEVICE"]
+
+    def test_no_anchor_is_bolted_to_the_proof_mass(self):
+        from soidlc import connectivity
+        art, dev = self._shapes()
+        plate = [s for s in dev if s.label == "plate"][0]
+        shorted = [a for a in dev if a.label == "anchor"
+                   and connectivity.touches(a.polygon, plate.polygon)]
+        self.assertEqual(
+            shorted, [],
+            "an anchor touching the proof mass ties it straight to the "
+            "substrate: the suspension stops being a suspension")
+
+    def test_each_anchor_grips_exactly_one_beam(self):
+        from soidlc import connectivity
+        art, dev = self._shapes()
+        beams = [s for s in dev if s.label == "beam"]
+        anchors = [s for s in dev if s.label == "anchor"]
+        self.assertEqual(len(anchors), 8)
+        for a in anchors:
+            n = sum(1 for b in beams
+                    if connectivity.touches(a.polygon, b.polygon))
+            self.assertEqual(n, 1,
+                             f"anchor at {a.polygon.bbox()} grips {n} beams; "
+                             f"only its own outboard beam may be gripped")
+
+    def test_mass_reaches_the_substrate_only_through_two_beams(self):
+        """The series path: mass -> inboard beam -> truss -> outboard beam ->
+        anchor.  If the outboard beam also reached the mass, the mass would
+        hang off the anchor through a few um of silicon and be rigid."""
+        from soidlc import connectivity
+        art, dev = self._shapes()
+        plate = [s for s in dev if s.label == "plate"][0]
+        anchors = [s for s in dev if s.label == "anchor"]
+        for a in anchors:
+            beams_on_anchor = [b for b in dev if b.label == "beam"
+                               and connectivity.touches(a.polygon, b.polygon)]
+            for b in beams_on_anchor:
+                self.assertFalse(
+                    connectivity.touches(b.polygon, plate.polygon),
+                    "an anchored beam also touches the mass: the suspension "
+                    "is short-circuited")
+
+
+class TestFoldedFlexureFEM(unittest.TestCase):
+    """Validates the folded-flexure stiffness formula against plane-stress FEM.
+
+    This is the check that caught both geometry shorts above -- neither the
+    parser, the unit checker nor the LVS extractor could see them, because a
+    rigid block is a perfectly legal device.
+    """
+
+    def test_lumped_f0_agrees_with_fem(self):
+        with open(os.path.join(EX, "folded_flexure_resonator.soidl")) as f:
+            art = compile_source(f.read(), fem=True, fem_h=12.0, base_dir=EX)
+        self.assertEqual(art.errors, [], art.errors)
+        cmp = [l for l in art.report
+               if l.startswith("fem") and "vs lumped" in l]
+        self.assertTrue(cmp, art.report)
+        pct = float(cmp[0].rsplit("(", 1)[1].rstrip("%)"))
+        self.assertLess(abs(pct), 15.0, cmp[0])
+
+
 if __name__ == "__main__":
     unittest.main()

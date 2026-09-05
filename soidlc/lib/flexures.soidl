@@ -50,3 +50,62 @@ component frame(W = 680 um, H = 680 um, bar = 40 um) {
   check W > 2*bar;
   check H > 2*bar;
 }
+
+// Folded flexure: each fold is an inboard beam and an outboard beam joined by
+// a truss at the far end, so the pair acts as two guided beams in SERIES.
+//
+// Folding is what relieves axial stress.  A straight guided beam has to
+// stretch in order to deflect, so it stiffens with amplitude and its
+// resonance drifts; a folded one lets the truss take up that extension, and
+// f0 stays put.
+//
+// The two beams are NOT the same length, and the geometry is why.  A fold's
+// anchor sits beside its own attachment point -- that adjacency is the whole
+// point of the topology -- so it has to stand off from the mass edge by
+// `gap`, and the outboard beam therefore ends `gap` short of the inboard one.
+// Two cantilevers in series add compliances:
+//
+//   1/k_fold = L_in^3/(E*t*w^3) + L_out^3/(E*t*w^3)
+//   k_fold   = E*t*w^3 / (L_in^3 + L_out^3),   L_out = L - gap - 2 um
+//
+// Pretending both were L would understate the stiffness by about a quarter at
+// the default proportions, and nothing in the compiler would object: the
+// geometry is legal and `derive` is just arithmetic.  The FEM check on
+// examples/folded_flexure_resonator.soidl is what holds this formula honest.
+//
+// Two more things this layout gets wrong if drawn carelessly, neither of
+// which raises an error:
+//   * an anchor placed on the mass side (local +y) bolts the proof mass
+//     straight to the substrate -- one legal island, no LVS complaint, and a
+//     resonator an order of magnitude too stiff;
+//   * an outboard beam that also reaches into the mass ties the mass to the
+//     anchor through a few um of silicon, with the same effect.
+// Both are covered by tests in tests/test_library.py.
+component folded_flexure(L = 200 um, w = 4 um, n_folds = 2,
+                         truss_w = 8 um, pitch = 30 um, gap = 30 um) {
+  mech port fixed, shuttle;
+
+  derive k.x = n_folds * (process.DEVICE.E * process.DEVICE.thickness * w^3)
+               / (L^3 + (L - gap - 2 um)^3);
+
+  geometry {
+    repeat i in 0..n_folds-1 {
+      // inboard beam: reaches 2 um into the mass, runs out to the truss
+      beam(L, w, dir = y) at (i * pitch, 2 um - L/2);
+      // outboard beam: from the truss back in, stopping `gap` short of the
+      // mass so it grips the anchor and nothing else
+      beam(L - gap + 4 um, w, dir = y)
+          at (i * pitch + pitch/2, 4 um - gap/2 - L/2 - 1 um);
+      // fold truss joining the two beam tips at the far end
+      beam(pitch/2 + w, truss_w, dir = x)
+          at (i * pitch + pitch/4, 2 um - L - truss_w/2 + w/2);
+      // anchor: grips the outboard beam only, standing clear of the mass
+      anchor(16 um, gap - 6 um) at (i * pitch + pitch/2, 3 um - gap/2 - 3 um);
+    }
+  }
+
+  check w >= 2 um;
+  check pitch > 4*w;
+  check gap > 12 um;
+  check L > 3*gap;
+}
