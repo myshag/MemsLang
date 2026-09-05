@@ -9,6 +9,7 @@ a textual report of every ``derive`` / ``check`` / ``solve``.
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -51,6 +52,15 @@ class Layer:
     E: float = 169e9          # Young's modulus, Pa
     rho: float = 2330.0       # density, kg/m^3
     nu: float = 0.22          # Poisson's ratio (plane-stress isotropic approx)
+
+
+# the SOIDL standard library ships inside the package (see pyproject
+# package-data), so an installed soidlc can still resolve `import "..."`
+_LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
+
+
+class SoidlImportError(Exception):
+    """A SOIDL `import` could not be resolved."""
 
 
 _LAYER_COLORS = {
@@ -114,8 +124,10 @@ def _assign_z(p: ProcessInfo) -> None:
 
 # ---------------------------------------------------------------------------
 class Elaborator:
-    def __init__(self, file: A.File):
+    def __init__(self, file: A.File, base_dir: Optional[str] = None):
         self.file = file
+        self.base_dir = base_dir
+        self._loaded_imports: set = set()
         self.components: Dict[str, A.Component] = {}
         self.devices: Dict[str, A.Device] = {}
         self.process = _default_process()
@@ -129,6 +141,11 @@ class Elaborator:
 
     def _index(self) -> None:
         proc = None
+        # imports first, so a local declaration of the same name shadows a
+        # library one -- the same rule as a user component shadowing a builtin
+        for d in self.file.decls:
+            if isinstance(d, A.Import):
+                self._load_import(d, self.base_dir)
         for d in self.file.decls:
             if isinstance(d, A.Process):
                 proc = d
@@ -138,6 +155,42 @@ class Elaborator:
                 self.devices[d.name] = d
         if proc is not None:
             self.process = self._build_process(proc)
+
+    # ---- imports --------------------------------------------------------
+    def _resolve_import(self, path: str, base_dir) -> str:
+        cands = []
+        if base_dir:
+            cands.append(os.path.join(base_dir, path))
+        cands.append(os.path.join(_LIB_DIR, path))
+        for c in cands:
+            if os.path.isfile(c):
+                return os.path.abspath(c)
+        looked = ", ".join(os.path.dirname(c) or "." for c in cands)
+        raise SoidlImportError(
+            f"cannot resolve import {path!r}; looked in {looked}")
+
+    def _load_import(self, node: A.Import, base_dir) -> None:
+        from .parser import parse as _parse
+        abspath = self._resolve_import(node.path, base_dir)
+        if abspath in self._loaded_imports:
+            return                  # diamond import: load once, not an error
+        self._loaded_imports.add(abspath)
+        with open(abspath) as f:
+            sub = _parse(f.read())
+        sub_dir = os.path.dirname(abspath)
+        # a library file's nested imports load first, so the file's own
+        # components shadow the ones it imports -- shadowing, one level down
+        for d in sub.decls:
+            if isinstance(d, A.Import):
+                self._load_import(d, sub_dir)
+        for d in sub.decls:
+            if isinstance(d, A.Component):
+                self.components[d.name] = d
+            elif not isinstance(d, A.Import):
+                raise SoidlImportError(
+                    f"{os.path.basename(abspath)}: an imported file may only "
+                    f"declare components, found "
+                    f"{type(d).__name__.lower()!r}")
 
     # ---- process --------------------------------------------------------
     def _build_process(self, proc: A.Process) -> ProcessInfo:

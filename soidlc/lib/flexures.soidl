@@ -1,0 +1,29 @@
+// SOIDL standard library: suspension elements.
+// Imported as:  import "flexures.soidl";
+//
+// Local origin of every flexure = its attachment point on the moving mass.
+// Each beam reaches 2 um into the mass and runs outboard to its anchor, so an
+// instance placed exactly on a mass edge is silicon-continuous with it -- the
+// connectivity check enforces that overlap, so do not trim it away.
+
+// n clamped-guided beams in parallel, stiff along y, compliant along x.
+// k = n * E * t * w^3 / L^3  (clamped-guided: both ends restrained in slope)
+component guided_beam(L = 200 um, w = 4 um, n_beams = 2, pitch = 12 um) {
+  mech port fixed, shuttle;
+
+  derive k.x = n_beams * (process.DEVICE.E * process.DEVICE.thickness * w^3) / L^3;
+
+  geometry {
+    repeat i in 0..n_beams-1 {
+      beam(L, w, dir = y) at (i * pitch, 2 um - L/2);
+    }
+    // truss tying the beam tops together, spanning them exactly
+    beam((n_beams - 1) * pitch + w, w, dir = x)
+        at ((n_beams - 1) * pitch/2, 0);
+    anchor((n_beams - 1) * pitch + w + 12 um, 20 um)
+        at ((n_beams - 1) * pitch/2, 2 um - L - 8 um);
+  }
+
+  check w >= 2 um;
+  check L/w <= 100 warn "very compliant beam, check buckling";
+}

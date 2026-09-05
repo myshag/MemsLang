@@ -7,6 +7,7 @@ soidlc-specific knowledge.
 from __future__ import annotations
 
 import math
+import os
 from typing import List, Optional
 
 from . import build3d
@@ -17,10 +18,10 @@ from .elaborate import Elaborator
 _STATIC_LAYERS = frozenset(("BOX", "HANDLE"))
 
 
-def _compile_source(src: str):
+def _compile_source(src: str, base_dir: Optional[str] = None):
     """Elaborate SOIDL source text and build its 3D mesh; return (elab, result, mesh)."""
     ast = parse(src)
-    elab = Elaborator(ast)
+    elab = Elaborator(ast, base_dir=base_dir)
     from . import closure
     overrides = closure.run(elab, None, fem_calibrate=False, fem_h=20.0)
     result = elab.elaborate_device(None, overrides=overrides)
@@ -31,7 +32,8 @@ def _compile_source(src: str):
 def _compile(path: str):
     """Elaborate a .soidl file and build its 3D mesh; return (elab, result, mesh)."""
     with open(path) as f:
-        return _compile_source(f.read())
+        return _compile_source(f.read(),
+                               base_dir=os.path.dirname(os.path.abspath(path)))
 
 
 def build_bundle_from_source(src: str, n_modes: int = 6,
