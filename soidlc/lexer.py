@@ -14,7 +14,7 @@ from typing import List, Optional
 from .units import is_unit
 
 KEYWORDS = {
-    "process", "component", "device", "chip",
+    "process", "component", "device", "chip", "import",
     "stack", "layer", "masks", "mask", "rules", "release", "drie",
     "geometry", "repeat", "in", "at", "attach",
     "mech", "elec", "port", "param", "derive", "inst", "net",
