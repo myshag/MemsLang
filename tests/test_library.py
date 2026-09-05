@@ -156,5 +156,39 @@ class TestWire(unittest.TestCase):
             G.wire([(0.0, 0.0)], 4.0)
 
 
+
+class TestCircularGeometry(unittest.TestCase):
+    def test_circle_area_converges(self):
+        self.assertAlmostEqual(G.circle(10.0, 256).area(), math.pi * 100.0,
+                               delta=0.05)
+
+    def test_annulus_area(self):
+        R, w = 50.0, 10.0
+        p = G.annulus(R, w, 256)
+        expected = math.pi * ((R + w / 2) ** 2 - (R - w / 2) ** 2)
+        self.assertAlmostEqual(p.area(), expected, delta=expected * 0.001)
+        self.assertEqual(len(p.holes), 1)
+        self.assertTrue(p.band)
+
+    def test_annulus_rings_pair_one_to_one(self):
+        p = G.annulus(50.0, 10.0, 32)
+        self.assertEqual(len(p.exterior), len(p.holes[0]))
+
+    def test_arc_is_a_quarter_of_the_band(self):
+        R, w = 50.0, 10.0
+        full = math.pi * ((R + w / 2) ** 2 - (R - w / 2) ** 2)
+        q = G.arc(R, w, 0.0, 90.0, 256).area()
+        self.assertAlmostEqual(q, full / 4.0, delta=full * 0.002)
+
+    def test_band_flag_survives_placement(self):
+        """elaborate translates and rotates every shape; a ring that lost the
+        flag would silently fall back to the non-manifold bridging path."""
+        p = G.annulus(50.0, 10.0, 32)
+        self.assertTrue(p.translated(5.0, 5.0).band)
+        self.assertTrue(p.rotated(90).band)
+        self.assertTrue(p.normalized().band)
+        self.assertTrue(p.mirrored(True, False).band)
+
+
 if __name__ == "__main__":
     unittest.main()

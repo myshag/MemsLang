@@ -37,15 +37,23 @@ def ensure_cw(ring: Ring) -> Ring:
 class Polygon:
     exterior: Ring
     holes: List[Ring] = field(default_factory=list)
+    # A "band" is a ring whose single hole samples the same angles as its
+    # exterior, so the mesher can cap it with quads instead of cutting a
+    # bridge slit (which collapses into a non-manifold edge).  Every
+    # transform below must carry the flag: elaborate translates, rotates and
+    # mirrors each shape during placement, and a ring that lost it would
+    # silently fall back to the broken path.
+    band: bool = False
 
     def normalized(self) -> "Polygon":
         return Polygon(ensure_ccw(self.exterior),
-                       [ensure_cw(h) for h in self.holes])
+                       [ensure_cw(h) for h in self.holes], self.band)
 
     def translated(self, dx: float, dy: float) -> "Polygon":
         return Polygon(
             [(x + dx, y + dy) for x, y in self.exterior],
             [[(x + dx, y + dy) for x, y in h] for h in self.holes],
+            self.band,
         )
 
     def rotated(self, deg: float) -> "Polygon":
@@ -59,7 +67,8 @@ class Polygon:
         def rot(r: Ring) -> Ring:
             return [(x * c - y * s, x * s + y * c) for x, y in r]
 
-        return Polygon(rot(self.exterior), [rot(h) for h in self.holes])
+        return Polygon(rot(self.exterior), [rot(h) for h in self.holes],
+                       self.band)
 
     def mirrored(self, mx: bool, my: bool) -> "Polygon":
         fx = -1.0 if mx else 1.0
@@ -68,7 +77,8 @@ class Polygon:
         def m(r: Ring) -> Ring:
             return [(x * fx, y * fy) for x, y in r]
 
-        return Polygon(m(self.exterior), [m(h) for h in self.holes])
+        return Polygon(m(self.exterior), [m(h) for h in self.holes],
+                       self.band)
 
     def bbox(self) -> Tuple[float, float, float, float]:
         xs = [p[0] for p in self.exterior]
@@ -142,6 +152,45 @@ def wire(points: List[Pt], w: float) -> Polygon:
     left = [(p[0] + o[0], p[1] + o[1]) for p, o in zip(pts, offsets)]
     right = [(p[0] - o[0], p[1] - o[1]) for p, o in zip(pts, offsets)]
     return Polygon(left + list(reversed(right))).normalized()
+
+
+def circle(R: float, n_seg: int = 64,
+           cx: float = 0.0, cy: float = 0.0) -> Polygon:
+    """A regular-polygon approximation of a disk, wound CCW."""
+    if n_seg < 3:
+        raise ValueError("circle() needs at least 3 segments")
+    ring = [(cx + R * math.cos(2 * math.pi * i / n_seg),
+             cy + R * math.sin(2 * math.pi * i / n_seg))
+            for i in range(n_seg)]
+    return Polygon(ring)
+
+
+def annulus(R: float, w: float, n_seg: int = 64,
+            cx: float = 0.0, cy: float = 0.0) -> Polygon:
+    """A ring of centreline radius R and radial width w.
+
+    The hole samples the SAME angles as the exterior, so the two rings pair up
+    and the mesher can cap the band with quads (see mesh._band_caps).  Marked
+    band=True to say so.
+    """
+    if w <= 0 or w >= 2 * R:
+        raise ValueError("annulus() needs 0 < w < 2R")
+    outer = circle(R + w / 2.0, n_seg, cx, cy).exterior
+    inner = circle(R - w / 2.0, n_seg, cx, cy).exterior
+    return Polygon(list(outer), [list(reversed(inner))], band=True)
+
+
+def arc(R: float, w: float, a0_deg: float, a1_deg: float, n_seg: int = 64,
+        cx: float = 0.0, cy: float = 0.0) -> Polygon:
+    """A partial band from a0 to a1 degrees: a simple ring, no hole."""
+    a0 = math.radians(a0_deg)
+    a1 = math.radians(a1_deg)
+    k = max(2, int(round(n_seg * abs(a1_deg - a0_deg) / 360.0)) + 1)
+    ang = [a0 + (a1 - a0) * i / (k - 1) for i in range(k)]
+    ro, ri = R + w / 2.0, R - w / 2.0
+    outer = [(cx + ro * math.cos(a), cy + ro * math.sin(a)) for a in ang]
+    inner = [(cx + ri * math.cos(a), cy + ri * math.sin(a)) for a in ang]
+    return Polygon(outer + list(reversed(inner))).normalized()
 
 
 def rect_corner(x0: float, y0: float, w: float, h: float) -> Polygon:
