@@ -8,6 +8,7 @@ outer boundary.  Side walls are emitted as quads (two triangles each).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import List, Sequence, Tuple
 
 from . import geometry as G
@@ -160,9 +161,52 @@ def triangulate_with_holes(poly: G.Polygon) -> List[Tuple[G.Pt, G.Pt, G.Pt]]:
                    and all(_is_rectilinear(h) for h in poly.holes))
     if rectilinear:
         return _decompose_rectilinear(poly)
+    if (getattr(poly, "band", False) and len(poly.holes) == 1
+            and len(poly.holes[0]) == len(poly.exterior)):
+        return _band_caps(poly)
     ring = _bridge_holes(poly)
     idx = triangulate_simple(ring)
     return [(ring[a], ring[b], ring[c]) for (a, b, c) in idx]
+
+
+def _band_caps(poly: G.Polygon) -> List[Tuple[G.Pt, G.Pt, G.Pt]]:
+    """Cap triangles for a ring whose hole samples the same angles as its
+    exterior: two triangles per segment, sharing only real edges.
+
+    This exists because _bridge_holes cuts a zero-width slit from the hole out
+    to the exterior and walks it twice.  extrude_polygon merges coincident
+    vertices, so the slit's two sides collapse into a single edge shared by
+    four triangles -- closed, but non-manifold, which breaks STL consumers.
+    Measured: exactly 4 such edges per annulus, independent of segment count.
+
+    Vertices are paired by ANGLE about the centroid, not by list index.
+    Placement mirrors and rotates shapes (elaborate._apply_attach), and
+    mirroring reverses ring winding -- index pairing would then stitch the
+    rings together with a twist that is still watertight but geometrically
+    wrong, which is the worst kind of wrong.
+    """
+    outer = list(poly.exterior)
+    inner = list(poly.holes[0])
+    n = len(outer)
+    cx = sum(p[0] for p in outer) / n
+    cy = sum(p[1] for p in outer) / n
+
+    def by_angle(ring):
+        return sorted(range(len(ring)),
+                      key=lambda i: math.atan2(ring[i][1] - cy,
+                                               ring[i][0] - cx))
+
+    o = by_angle(outer)
+    h = by_angle(inner)
+    tris: List[Tuple[G.Pt, G.Pt, G.Pt]] = []
+    for j in range(n):
+        a = outer[o[j]]
+        b = outer[o[(j + 1) % n]]
+        c = inner[h[j]]
+        d = inner[h[(j + 1) % n]]
+        tris.append((a, b, d))
+        tris.append((a, d, c))
+    return tris
 
 
 def _bridge_holes(poly: G.Polygon) -> List[G.Pt]:

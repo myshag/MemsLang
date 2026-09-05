@@ -190,5 +190,73 @@ class TestCircularGeometry(unittest.TestCase):
         self.assertTrue(p.mirrored(True, False).band)
 
 
+
+class TestRingMesh(unittest.TestCase):
+    """The annulus extrusion defect and its fix.
+
+    Measured before the fix: exactly 4 non-manifold edges, constant across
+    n_seg in {8,16,64,128}.  They were not boundary edges (count 1) but edges
+    shared by FOUR triangles -- _bridge_holes cuts a zero-width slit from the
+    hole to the exterior and traverses it twice, and the extruder's vertex
+    cache merges the two sides into one edge.
+    """
+
+    def _bad_edges(self, mesh):
+        edges = Counter()
+        for (a, b, c) in mesh.triangles:
+            for e in ((a, b), (b, c), (c, a)):
+                edges[frozenset(e)] += 1
+        return sum(1 for v in edges.values() if v != 2)
+
+    def test_annulus_extrudes_watertight(self):
+        for n_seg in (8, 16, 64):
+            with self.subTest(n_seg=n_seg):
+                poly = G.annulus(50.0, 10.0, n_seg)
+                mesh = M.extrude_polygon(poly, 0.0, 25.0, "DEVICE")
+                self.assertEqual(self._bad_edges(mesh), 0)
+                self.assertGreater(len(mesh.triangles), 0)
+
+    def test_annulus_survives_placement_transforms(self):
+        """elaborate mirrors and rotates shapes when resolving `attach`.
+
+        Mirroring flips ring winding, so a cap that paired vertices by raw
+        index would silently produce twisted triangles.  Placement must not
+        change watertightness.
+        """
+        base = G.annulus(50.0, 10.0, 32)
+        for name, poly in (
+            ("translated", base.translated(120.0, -40.0)),
+            ("rotated90", base.rotated(90)),
+            ("rotated37", base.rotated(37)),
+            ("mirrored_x", base.mirrored(True, False)),
+            ("mirrored_xy", base.mirrored(True, True)),
+            ("normalized_mirror", base.mirrored(True, False).normalized()),
+        ):
+            with self.subTest(transform=name):
+                mesh = M.extrude_polygon(poly, 0.0, 25.0, "DEVICE")
+                self.assertEqual(self._bad_edges(mesh), 0)
+
+    def test_annulus_cap_area_matches_the_polygon(self):
+        """Watertight is necessary but not sufficient: twisted pairing can
+        still be closed.  The cap triangles must also cover the real area."""
+        poly = G.annulus(50.0, 10.0, 64)
+        tris = M.triangulate_with_holes(poly)
+        area = 0.0
+        for (a, b, c) in tris:
+            area += abs((b[0] - a[0]) * (c[1] - a[1])
+                        - (c[0] - a[0]) * (b[1] - a[1])) / 2.0
+        self.assertAlmostEqual(area, poly.area(), delta=poly.area() * 0.01)
+
+    def test_disk_extrudes_watertight(self):
+        mesh = M.extrude_polygon(G.circle(50.0, 64), 0.0, 25.0, "DEVICE")
+        self.assertEqual(self._bad_edges(mesh), 0)
+
+    def test_tilted_bar_extrudes_watertight(self):
+        # the chevron case: a rectangle rotated off-axis leaves the voxel path
+        mesh = M.extrude_polygon(G.rect(100.0, 6.0).rotated(8.0),
+                                 0.0, 25.0, "DEVICE")
+        self.assertEqual(self._bad_edges(mesh), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
