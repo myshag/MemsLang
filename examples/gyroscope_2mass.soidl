@@ -10,6 +10,8 @@
 // Coriolis transfer is decoupled -- exactly what the plain single-mass design
 // could not do (its x/y modes split by 20%).
 
+import "flexures.soidl";
+
 process soi5 {
   stack {
     layer METAL  { thickness = 0.5 um; material = Au }
@@ -29,10 +31,7 @@ component decoupled_core(wd = 6 um, ws = 5 um, Ld = 160 um) {
 
   geometry {
     // --- drive frame: a square ring of four 40 um bars ---
-    beam(680 um, 40 um, dir = x) at (0,  320 um);   // top bar
-    beam(680 um, 40 um, dir = x) at (0, 0 - 320 um); // bottom bar
-    beam(680 um, 40 um, dir = y) at (0 - 320 um, 0); // left bar
-    beam(680 um, 40 um, dir = y) at (320 um, 0);     // right bar
+    frame(680 um, 680 um, 40 um) at (0, 0);
 
     // --- drive suspension: four y-beams (soft in x) to outer anchors ---
     beam(Ld, wd, dir = y) at (0 - 180 um, 340 um + Ld/2);

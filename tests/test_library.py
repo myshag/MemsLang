@@ -258,5 +258,46 @@ class TestRingMesh(unittest.TestCase):
         self.assertEqual(self._bad_edges(mesh), 0)
 
 
+
+class TestFrame(unittest.TestCase):
+    def test_frame_is_a_hollow_square(self):
+        src = TestImportResolution.PROC + """
+          import "flexures.soidl";
+          device d {
+            inst F = frame(W = 680 um, H = 680 um, bar = 40 um) at (0, 0);
+            inst A = anchor(30 um, 30 um) at (0, 320 um);
+            net GND = F | A;
+          }
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        x0, y0, x1, y1 = _bbox(art)
+        self.assertAlmostEqual(x1 - x0, 680.0, delta=1.0)
+        self.assertAlmostEqual(y1 - y0, 680.0, delta=1.0)
+        area = sum(s.polygon.area() for s in art.result.shapes
+                   if s.layer == "DEVICE")
+        self.assertLess(area, 680.0 * 680.0 * 0.5, "frame is not hollow")
+
+    def test_frame_corners_are_counted_once(self):
+        """Horizontal bars span the full width and vertical ones are shortened
+        by 2*bar, so corner silicon is covered exactly once -- but the bars
+        must still abut, or the ring is four islands instead of one."""
+        src = TestImportResolution.PROC + """
+          import "flexures.soidl";
+          device d {
+            inst F = frame(W = 400 um, H = 400 um, bar = 20 um) at (0, 0);
+            inst A = anchor(30 um, 30 um) at (0, 190 um);
+            net GND = F | A;
+          }
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        bars = [s for s in art.result.shapes
+                if s.layer == "DEVICE" and s.label == "beam"]
+        exact = 2 * (400.0 * 20.0) + 2 * ((400.0 - 40.0) * 20.0)
+        self.assertAlmostEqual(sum(b.polygon.area() for b in bars), exact,
+                               delta=1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

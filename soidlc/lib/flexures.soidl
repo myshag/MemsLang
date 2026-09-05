@@ -27,3 +27,26 @@ component guided_beam(L = 200 um, w = 4 um, n_beams = 2, pitch = 12 um) {
   check w >= 2 um;
   check L/w <= 100 warn "very compliant beam, check buckling";
 }
+
+// A square ring of four bars: the outer drive frame of a decoupled gyroscope,
+// or any structure that must surround an inner mass.  W/H are the OUTER
+// dimensions; `bar` is the wall width.
+//
+// Horizontal bars span the full width; vertical ones are shortened by 2*bar.
+// The corner silicon is therefore covered exactly once (no double-counted
+// area) while the bars still abut, which is what connectivity needs to fuse
+// the four into one electrical island.
+component frame(W = 680 um, H = 680 um, bar = 40 um) {
+  mech port body;
+
+  geometry {
+    beam(W, bar, dir = x) at (0, H/2 - bar/2);
+    beam(W, bar, dir = x) at (0, bar/2 - H/2);
+    beam(H - 2*bar, bar, dir = y) at (bar/2 - W/2, 0);
+    beam(H - 2*bar, bar, dir = y) at (W/2 - bar/2, 0);
+  }
+
+  check bar >= 2 um;
+  check W > 2*bar;
+  check H > 2*bar;
+}
