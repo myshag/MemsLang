@@ -63,14 +63,18 @@ The pipeline mirrors the `soidlc` stages from the spec:
    dimension vector `(length, mass, time, current)`. Arithmetic propagates
    dimensions and a mismatch (`length + freq`) is an error. `derive`/`check`
    expressions are evaluated and reported with their dimensions.
-3. **Elaboration** (`elaborate.py`) — resolves parameters, expands `repeat`
-   loops and component hierarchy, instantiates `array(...)`, and applies
-   placement: `at (x, y)`, `attach (rotor -> M.left)`, and
+3. **Elaboration** (`elaborate.py`) — resolves `import` declarations against
+   the importing file's directory and then the bundled standard library
+   (`soidlc/lib/`), resolves parameters, expands `repeat` loops and component
+   hierarchy, instantiates `array(...)`, and applies placement: `at (x, y)`, `attach (rotor -> M.left)`, and
    `place = corners(M)` (resolved from instance bounding boxes). Produces a
    flat list of layer-tagged 2D polygons in micrometres.
-4. **Geometry synthesis** (`primitives.py`) — `beam`, `plate` (with
-   auto-generated release holes from the process `release` rules), `comb`/
-   `combdrive`, `anchor`, `gap_stop`, `via_metal` (METAL), `trench`.
+4. **Geometry synthesis** (`primitives.py`) — 17 parametric generators:
+   structure (`beam`, `plate` and `disk` with auto-generated release holes
+   from the process `release` rules, `anchor`, `ring`, `meander`, `gap_stop`),
+   transducers (`comb`/`combdrive`, `parallel_plate`, `chevron`, `hot_arm`),
+   metal (`via_metal`, `pad`, `route`, `route_path`), and `trench`, the
+   backside opening that cuts the handle slab.
 5. **Connectivity extraction** (`connectivity.py`) — in SOI the structural
    layer is conductive, so electrical nodes are exactly the connected
    components of the DEVICE polygons. The compiler computes them (union-find
@@ -240,6 +244,101 @@ The pipeline mirrors the `soidlc` stages from the spec:
     (per-layer colours), SVG top view, and a z-buffered isometric PNG from a
     built-in software rasteriser.
 
+## Element library
+
+SOIDL ships a standard library written **in SOIDL**, pulled in with `import`:
+
+```soidl
+import "flexures.soidl";
+
+device d {
+  inst M = plate(300 um, 300 um) at (0, 0);
+  inst S = array(folded_flexure(L = 200 um, w = 4 um), count = 4,
+                 place = corners(M));
+}
+```
+
+Imports resolve first against the importing file's directory, then against
+the bundled library in `soidlc/lib/`. A local `component` shadows a library
+one of the same name, the same rule that already lets a user component shadow
+a builtin primitive. An imported file may declare components only.
+
+The split between the two halves of the library is deliberate. Irreducible
+parametric geometry — a comb, a ring, a meander path — stays a Python
+generator, because expressing it in SOIDL would mean putting loops with
+trigonometry into the language. Everything that is a *composition* of
+primitives lives in `soidlc/lib/*.soidl`, so the library of a language for
+describing MEMS is itself written in that language and a user can extend it
+without touching the compiler.
+
+| component | file | stiffness |
+| --- | --- | --- |
+| `guided_beam` | flexures | `k = n·E·t·w³/L³` |
+| `folded_flexure` | flexures | `k = E·t·w³/(L³ + L_out³)` |
+| `serpentine` | flexures | `k = E·t·w³/(n·L³)` |
+| `crab_leg` | flexures | *none — see below* |
+| `torsion_bar` | flexures | `k_θ = G·J/L` |
+| `frame` | flexures | — |
+| `membrane` | membranes | — |
+
+### What the FEM validation actually caught
+
+The stiffness formulas above are checked against the scikit-fem solvers, and
+that check was not a formality. Three of the flexures were **rigid blocks**
+that every other check in the compiler passed:
+
+| element | first attempt | after |
+| --- | --- | --- |
+| `folded_flexure` | 192.8 kHz, then 220.1 kHz | **26.5 kHz** (+2.2% vs lumped) |
+| `serpentine` | 448.6 kHz | **43.6 kHz** (+12.2%) |
+| `micromirror` | one bar buried in the plate | both bars symmetric |
+
+Every one of those was a single legal electrical island, so the LVS check was
+satisfied, and `derive k.x` is arithmetic that cannot know the silicon it
+describes is rigid. The failures were: an anchor wide enough to touch its own
+flexure's beams; anchors placed on the proof-mass side, bolting the mass to
+the substrate; meander spans all reaching the mass, so they acted in parallel
+rather than in series; and a torsion bar placed with `at` instead of `attach`,
+which left it inside the plate it was supposed to hinge.
+
+`tests/test_library.py` therefore carries geometric tests as their own class —
+no anchor may touch the proof mass, each anchor grips exactly one beam, no
+anchored beam may also reach the mass — because none of these are visible to
+the parser, the unit checker, or the netlist extractor.
+
+`crab_leg` ships with **no** stiffness formula. The textbook expression
+measured 38.7% low against FEM (67.4 kHz against 48.6 kHz predicted): for
+motion along x the thigh is loaded axially and contributes almost no bending
+compliance, so the formula attributes it to the wrong member. Calibrating a
+fudge factor would have hidden exactly the physics the validation exists to
+expose, so the component reports no `k` at all and `f_res()` raises rather
+than returning a number.
+
+### Out-of-plane devices
+
+`layer HANDLE` and `mask TRENCH -> etch(HANDLE, through, backside)` were
+declared by every example process from the start and used by none:
+`prim_trench` returned nothing and the handle was an unbroken slab. `trench`
+now emits a footprint that `build3d` subtracts from the substrate and its
+oxide, which is what makes membranes and torsional devices expressible.
+
+A torsional mode is governed by the mass moment of inertia, not the mass.
+`f0 = √(k/m)` fed a mirror does not raise — it returns a plausible,
+meaningless number — so the model reports `k_θ`, `J_m` and `f0_theta`
+separately, and a bare `f_res()` on a purely torsional device **raises**:
+
+```
+this device has only a torsional mode; call f_res(axis = theta).
+A translational f_res would divide a torsional stiffness by a mass and
+return a meaningless number
+```
+
+The teeter-totter accelerometer is validated against the 3D solid solver
+(`soidlc/fem/solid3d.py`), which is the only one that can see the mode at
+all: 3D mode 1 lands at 12430 Hz against a lumped 11319 Hz (+9.8%), and the
+test also asserts the mode is genuinely antisymmetric about the hinge rather
+than merely close in frequency.
+
 ## Process simulation (feature scale)
 
 Alongside the device pipeline there is a family of feature-scale **fabrication**
@@ -400,12 +499,19 @@ kernel here does not do.
 
 ## Supported SOIDL subset (v0.1)
 
-Implemented: `process { stack / masks / rules }`, `component(params) { port,
-derive, geometry, check }`, `device { inst, net, isolate, constraint, check,
-solve }`; `repeat` loops, `array`, placement/attachment (with automatic
-orientation: `attach (rotor -> M.top)` rotates the comb so the rotor faces
-the plate), unit-checked expressions, primitives listed above, and full
-connectivity extraction with `net`/`isolate` verification.
+Implemented: `import "name.soidl";` (top level only, resolved against the
+importing file then the bundled `soidlc/lib/`), `process { stack / masks /
+rules }`, `component(params) { port, derive, geometry, check }`,
+`device { inst, net, isolate, constraint, check, solve }`; `repeat` loops,
+`array`, placement/attachment (with automatic orientation:
+`attach (rotor -> M.top)` rotates the comb so the rotor faces the plate),
+unit-checked expressions, primitives listed above, and full connectivity
+extraction with `net`/`isolate` verification.
+
+Not implemented, and it shapes the library: SOIDL has **no list literal**, so
+a primitive taking a polyline (`route(points, w)`) would be callable only
+from Python. `route` therefore takes a length and a direction like `beam`
+does, and `route_path` covers the polyline case for Python callers.
 
 Best-effort / partial: `solve` (a numeric fallback length is used unless a
 closed-form is known); `constraint` calls are reported but not enforced
@@ -425,6 +531,7 @@ soidlc/
   parser.py      recursive-descent parser
   sast.py        AST node definitions
   primitives.py  primitive -> 2D polygon generators
+  lib/*.soidl    standard library, written in SOIDL (flexures, membranes)
   elaborate.py   hierarchy expansion, placement, model extraction
   connectivity.py electrical island extraction + net/isolate verification
   fem2d.py       pure-Python plane-stress FEM (Q6 elements, modal/static)
