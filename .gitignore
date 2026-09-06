@@ -9,3 +9,4 @@ out/
 poc_elmer/
 node_modules/
 webapp/frontend/dist/
+build/
