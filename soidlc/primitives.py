@@ -350,6 +350,41 @@ def prim_via_metal(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
                     mech="anchored")]
 
 
+def prim_pad(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
+    """A bond pad on METAL."""
+    w = _um(_arg(args, kwargs, 0, "w", Quantity(100e-6, (1, 0, 0, 0))))
+    h = _um(_arg(args, kwargs, 1, "h", Quantity(100e-6, (1, 0, 0, 0))))
+    return [G.Shape(ctx.metal_layer, G.rect(w, h), "pad", mech="anchored")]
+
+
+def prim_route(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
+    """A straight metal interconnect track.
+
+    Takes a length and a direction like beam() rather than a polyline,
+    because SOIDL has no list literal: a points= form would be callable only
+    from Python, and a primitive no .soidl file can invoke is not a language
+    feature.  route_path() covers the polyline case for callers that have one.
+    """
+    L = _um(_arg(args, kwargs, 0, "L", Quantity(100e-6, (1, 0, 0, 0))))
+    w = _um(_arg(args, kwargs, 1, "w", Quantity(8e-6, (1, 0, 0, 0))))
+    direction = _dir(_arg(args, kwargs, 2, "dir", "x"))
+    poly = G.rect(L, w) if direction == "x" else G.rect(w, L)
+    return [G.Shape(ctx.metal_layer, poly, "route", mech="anchored")]
+
+
+def prim_route_path(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
+    """A metal track following an arbitrary polyline (Python callers)."""
+    pts = _arg(args, kwargs, 0, "points")
+    w = _um(_arg(args, kwargs, 1, "w", Quantity(8e-6, (1, 0, 0, 0))))
+    if not pts:
+        raise ValueError("route_path() needs a points list")
+    coords = [(_um(p[0]) if isinstance(p[0], Quantity) else float(p[0]),
+               _um(p[1]) if isinstance(p[1], Quantity) else float(p[1]))
+              for p in pts]
+    return [G.Shape(ctx.metal_layer, G.wire(coords, w), "route",
+                    mech="anchored")]
+
+
 def _dir(v) -> str:
     if v is None:
         return "y"
@@ -371,6 +406,9 @@ PRIMITIVES = {
     "gap_stop": prim_gap_stop,
     "trench": prim_trench,
     "via_metal": prim_via_metal,
+    "pad": prim_pad,
+    "route": prim_route,
+    "route_path": prim_route_path,
 }
 
 

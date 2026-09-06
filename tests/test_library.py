@@ -905,5 +905,46 @@ class TestBacksideTrench(unittest.TestCase):
         self.assertNotIn("TRENCH", groups)
 
 
+
+class TestMetalRouting(unittest.TestCase):
+    def test_pad_lands_on_metal(self):
+        from soidlc import primitives as P
+        ctx = P.PrimitiveCtx()
+        pad = P.PRIMITIVES["pad"]([], {"w": _um(100), "h": _um(100)}, ctx)
+        self.assertEqual([s.layer for s in pad], [ctx.metal_layer])
+        self.assertAlmostEqual(pad[0].polygon.area(), 10000.0, places=3)
+
+    def test_route_is_a_metal_track_callable_from_source(self):
+        """SOIDL has no list literal, so route takes a length and a direction
+        like beam() does rather than a polyline -- a polyline form nobody can
+        call from a .soidl file would not be a language feature."""
+        src = TestImportResolution.PROC + """
+          device d {
+            inst M = plate(100 um, 100 um) at (0, 0);
+            inst A = anchor(30 um, 30 um) at (0, 0 - 55 um);
+            inst R = route(200 um, 10 um, dir = x) at (0, 120 um);
+            inst P = pad(80 um, 80 um) at (140 um, 120 um);
+            net GND = M | A;
+          }
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        metal = [s for s in art.result.shapes if s.layer == "METAL"]
+        self.assertEqual(len(metal), 2)
+        track = [s for s in metal if s.label == "route"][0]
+        x0, y0, x1, y1 = track.polygon.bbox()
+        self.assertAlmostEqual(x1 - x0, 200.0, places=3)
+        self.assertAlmostEqual(y1 - y0, 10.0, places=3)
+
+    def test_route_path_follows_a_polyline_from_python(self):
+        from soidlc import primitives as P
+        ctx = P.PrimitiveCtx()
+        rt = P.PRIMITIVES["route_path"](
+            [], {"points": [(0.0, 0.0), (100.0, 0.0), (100.0, 80.0)],
+                 "w": _um(8)}, ctx)
+        self.assertEqual([s.layer for s in rt], [ctx.metal_layer])
+        self.assertGreater(rt[0].polygon.area(), 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
