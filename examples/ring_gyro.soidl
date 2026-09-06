@@ -1,0 +1,51 @@
+// Vibrating-ring gyroscope.
+//
+// A ring has two degenerate wine-glass (cos 2-theta) modes 45 degrees apart.
+// Drive one; rotation about the normal axis Coriolis-couples energy into the
+// other, and its amplitude is the rate signal.  That degeneracy IS the design:
+// a square would split the two modes and destroy the transfer, which is why
+// this is the one device here that has to be round.
+//
+// The ring hangs on radial spokes -- stiff enough to hold it, compliant
+// enough not to perturb the mode shapes.  Four of them, so the suspension
+// keeps the ring's four-fold symmetry rather than breaking the degeneracy it
+// exists to preserve.
+// Compile:  python -m soidlc.cli examples/ring_gyro.soidl
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 0.52 um; material = Au }
+    layer DEVICE { thickness = 25 um;   material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;    material = SiO2 }
+    layer HANDLE { thickness = 400 um;  material = Si }
+  }
+  rules {
+    release { hole_size = 5 um; hole_pitch = 25 um; max_solid_span = 30 um }
+  }
+}
+
+// Central hub plus four orthogonal spokes out to the ring.
+component ring_suspension(R = 200 um, w = 4 um, hub = 40 um) {
+  mech port fixed, rim;
+
+  geometry {
+    anchor(hub, hub) at (0, 0);
+    // each spoke runs from the hub face out past the ring's inner radius
+    beam(R - hub/2, w, dir = x) at (R/2 + hub/4, 0);
+    beam(R - hub/2, w, dir = x) at (0 - R/2 - hub/4, 0);
+    beam(R - hub/2, w, dir = y) at (0, R/2 + hub/4);
+    beam(R - hub/2, w, dir = y) at (0, 0 - R/2 - hub/4);
+  }
+
+  check w >= 2 um;
+  check hub >= 20 um;
+}
+
+device ring_gyro {
+  inst RG  = ring(R = 200 um, w = 20 um, n_seg = 96) at (0, 0);
+  inst SUS = ring_suspension(R = 200 um, w = 4 um, hub = 40 um) at (0, 0);
+
+  net GND = RG | SUS.fixed;
+  constraint anchored(SUS.fixed);
+}

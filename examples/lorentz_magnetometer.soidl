@@ -1,0 +1,50 @@
+// Resonant Lorentz-force magnetometer.
+//
+// An AC current at the beam's resonance, crossed with the field being
+// measured, drives the beam; the amplitude is proportional to B and amplified
+// by Q.  There is no magnetic material anywhere -- the sensor is plain
+// silicon, which is exactly why it can be made in this SOI process at all.
+//
+// At Earth's field the stroke is tiny.  The requirement below records the
+// detection floor the readout has to reach, not a comfortable margin: it is
+// resonance, not force, that makes the signal measurable.
+// Compile:  python -m soidlc.cli examples/lorentz_magnetometer.soidl
+
+import "flexures.soidl";
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 1 um;   material = Au }
+    layer DEVICE { thickness = 25 um;  material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;   material = SiO2 }
+    layer HANDLE { thickness = 400 um; material = Si }
+  }
+  masks {
+    mask SOID     -> etch(DEVICE, through)
+    mask PADMETAL -> deposit(METAL)
+  }
+  rules {
+    release { hole_size = 5 um; hole_pitch = 25 um; max_solid_span = 30 um }
+  }
+}
+
+device lorentz_magnetometer {
+  param I_drive = 1 mA;
+  param B_earth = 50 uT;
+
+  inst BAR   = plate(500 um, 80 um) at (0, 0);
+  inst SUS   = array(guided_beam(L = 220 um, w = 4 um, n_beams = 2),
+                     count = 4, place = corners(BAR));
+  inst SENSE = combdrive(N = 30, Lf = 40 um) attach (rotor -> BAR.top);
+  inst PIN   = pad(100 um, 100 um) at (0 - 340 um, 0 - 140 um);
+  inst POUT  = pad(100 um, 100 um) at (340 um, 0 - 140 um);
+
+  require lorentz_stroke(I_drive, B_earth) >= 0.00001 um;
+
+  net SIG = SENSE.stator;
+  net GND = BAR | SUS.fixed;
+  isolate SIG from GND by trench;
+  constraint released(BAR, SUS);
+  constraint anchored(SUS.fixed, SENSE.stator);
+}
