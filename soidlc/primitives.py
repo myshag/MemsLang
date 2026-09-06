@@ -187,6 +187,37 @@ def prim_meander(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
     return shapes
 
 
+def prim_parallel_plate(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
+    """Gap-closing electrode pairs: released plates facing anchored ones.
+
+    Unlike a comb, whose capacitance is linear in displacement and whose force
+    is therefore constant with position, a parallel plate's capacitance goes as
+    1/(g - x).  The force rises as the gap closes, and past x = g/3 the
+    mechanical restoring force loses the race and the pair snaps shut.  That
+    pull-in is the whole reason RF switches are built this way -- and the
+    reason a gap-closing sensor must stay below it.  metrics.pull_in()
+    computes the collapse voltage.
+    """
+    W = _um(_arg(args, kwargs, 0, "W", Quantity(100e-6, (1, 0, 0, 0))))
+    H = _um(_arg(args, kwargs, 1, "H", Quantity(40e-6, (1, 0, 0, 0))))
+    g = _um(_arg(args, kwargs, 2, "g", Quantity(3e-6, (1, 0, 0, 0))))
+    n = int(round(_num(_arg(args, kwargs, 3, "n", 1))))
+    if g <= 0:
+        raise ValueError("parallel_plate() needs a positive gap")
+
+    shapes: List[G.Shape] = []
+    pitch = 2 * H + 2 * g
+    y = -(n - 1) * pitch / 2.0
+    for _ in range(n):
+        shapes.append(G.Shape(ctx.device_layer, G.rect(W, H, 0.0, y),
+                              "rotor_plate", mech="released"))
+        shapes.append(G.Shape(ctx.device_layer,
+                              G.rect(W, H, 0.0, y + H + g),
+                              "stator_plate", mech="anchored"))
+        y += pitch
+    return shapes
+
+
 def prim_gap_stop(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
     d = _um(_arg(args, kwargs, 0, "d"))
     return [G.Shape(ctx.device_layer, G.rect(max(d, 2.0), max(d, 2.0)),
@@ -220,6 +251,7 @@ PRIMITIVES = {
     "comb": prim_comb,
     "combdrive": prim_comb,    # combdrive renders its comb geometry
     "meander": prim_meander,
+    "parallel_plate": prim_parallel_plate,
     "gap_stop": prim_gap_stop,
     "trench": prim_trench,
     "via_metal": prim_via_metal,

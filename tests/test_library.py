@@ -631,5 +631,51 @@ class TestDETF(unittest.TestCase):
         self.assertEqual(art.errors, [], art.errors)
 
 
+
+def _um(v):
+    from soidlc.units import Quantity
+    return Quantity(v * 1e-6, (1, 0, 0, 0))
+
+
+class TestParallelPlate(unittest.TestCase):
+    def test_emits_a_released_and_an_anchored_plate(self):
+        from soidlc import primitives as P
+        shapes = P.PRIMITIVES["parallel_plate"](
+            [], {"W": _um(100), "H": _um(40), "g": _um(3), "n": 2},
+            P.PrimitiveCtx())
+        self.assertEqual(sorted({s.label for s in shapes}),
+                         ["rotor_plate", "stator_plate"])
+        mechs = {s.label: s.mech for s in shapes}
+        self.assertEqual(mechs["rotor_plate"], "released")
+        self.assertEqual(mechs["stator_plate"], "anchored")
+        self.assertEqual(sum(1 for s in shapes if s.label == "rotor_plate"), 2)
+
+    def test_gap_is_respected(self):
+        from soidlc import primitives as P
+        shapes = P.PRIMITIVES["parallel_plate"](
+            [], {"W": _um(100), "H": _um(40), "g": _um(3), "n": 1},
+            P.PrimitiveCtx())
+        rot = [s for s in shapes if s.label == "rotor_plate"][0]
+        sta = [s for s in shapes if s.label == "stator_plate"][0]
+        self.assertAlmostEqual(sta.polygon.bbox()[1] - rot.polygon.bbox()[3],
+                               3.0, places=3)
+
+    def test_plates_do_not_touch(self):
+        """A rotor touching its stator is a short, and at zero gap the
+        electrostatics are meaningless."""
+        from soidlc import primitives as P
+        from soidlc import connectivity
+        shapes = P.PRIMITIVES["parallel_plate"](
+            [], {"W": _um(100), "H": _um(40), "g": _um(3), "n": 3},
+            P.PrimitiveCtx())
+        rotors = [s for s in shapes if s.label == "rotor_plate"]
+        stators = [s for s in shapes if s.label == "stator_plate"]
+        for r in rotors:
+            for st in stators:
+                self.assertFalse(
+                    connectivity.touches(r.polygon, st.polygon),
+                    "rotor and stator plates must not touch")
+
+
 if __name__ == "__main__":
     unittest.main()
