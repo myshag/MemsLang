@@ -385,6 +385,47 @@ def prim_route_path(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
                     mech="anchored")]
 
 
+def prim_ring(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
+    """An annular resonator: the body of a ring gyroscope.
+
+    A ring's two degenerate wine-glass (cos 2-theta) modes sit 45 degrees
+    apart, and rotation Coriolis-couples energy between them -- that transfer
+    is the rate signal.  The degeneracy is why the ring has to be round: a
+    square would split the two modes and destroy the coupling.
+    """
+    R = _um(_arg(args, kwargs, 0, "R", Quantity(200e-6, (1, 0, 0, 0))))
+    w = _um(_arg(args, kwargs, 1, "w", Quantity(20e-6, (1, 0, 0, 0))))
+    n_seg = int(round(_num(_arg(args, kwargs, 2, "n_seg", 64))))
+    return [G.Shape(ctx.device_layer, G.annulus(R, w, n_seg), "ring",
+                    mech="released")]
+
+
+def prim_disk(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
+    """A solid disk, perforated from the process release rules like a plate.
+
+    Holes are taken from the same grid a plate uses and then filtered by
+    radius, so none reaches past the rim -- a clipped hole would be a notch in
+    the outline, not a release hole.
+
+    Note: a perforated disk is a non-rectilinear exterior with rectilinear
+    holes, which goes through _bridge_holes rather than the band path, and so
+    inherits the non-manifold seam documented in mesh.triangulate_with_holes.
+    Nothing in this library uses a perforated disk; a watertight one is the
+    case that would force a real fix to hole bridging.
+    """
+    R = _um(_arg(args, kwargs, 0, "R", Quantity(150e-6, (1, 0, 0, 0))))
+    n_seg = int(round(_num(_arg(args, kwargs, 1, "n_seg", 64))))
+    holes_arg = _arg(args, kwargs, 2, "holes", "auto")
+    poly = G.circle(R, n_seg)
+    want_holes = (holes_arg == "auto" or holes_arg is True)
+    if want_holes and 2 * R > ctx.max_solid_span:
+        keep = [h for h in _hole_grid(2 * R, 2 * R, ctx)
+                if all(math.hypot(x, y) < R - ctx.hole_size for (x, y) in h)]
+        if keep:
+            poly = G.Polygon(poly.exterior, keep)
+    return [G.Shape(ctx.device_layer, poly, "disk", mech="released")]
+
+
 def _dir(v) -> str:
     if v is None:
         return "y"
@@ -403,6 +444,8 @@ PRIMITIVES = {
     "parallel_plate": prim_parallel_plate,
     "chevron": prim_chevron,
     "hot_arm": prim_hot_arm,
+    "ring": prim_ring,
+    "disk": prim_disk,
     "gap_stop": prim_gap_stop,
     "trench": prim_trench,
     "via_metal": prim_via_metal,

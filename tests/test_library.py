@@ -1171,5 +1171,62 @@ class TestMembrane(unittest.TestCase):
         self.assertEqual(sum(1 for v in e.values() if v != 2), 0)
 
 
+
+class TestRingDisk(unittest.TestCase):
+    def _bad_edges(self, mesh):
+        edges = Counter()
+        for (a, b, c) in mesh.triangles:
+            for e in ((a, b), (b, c), (c, a)):
+                edges[frozenset(e)] += 1
+        return sum(1 for v in edges.values() if v != 2)
+
+    def test_ring_area_matches_the_annulus(self):
+        from soidlc import primitives as P
+        shapes = P.PRIMITIVES["ring"](
+            [], {"R": _um(200), "w": _um(20), "n_seg": 128}, P.PrimitiveCtx())
+        self.assertEqual(len(shapes), 1)
+        expected = math.pi * (210.0 ** 2 - 190.0 ** 2)
+        self.assertAlmostEqual(shapes[0].polygon.area(), expected,
+                               delta=expected * 0.002)
+        self.assertTrue(shapes[0].polygon.band,
+                        "a ring must carry the band flag or it falls back to "
+                        "the non-manifold bridging path")
+
+    def test_ring_extrudes_watertight_through_the_compiler(self):
+        src = TestImportResolution.PROC + """
+          device d {
+            inst R = ring(R = 200 um, w = 20 um) at (0, 0);
+            inst A = anchor(30 um, 30 um) at (0, 195 um);
+            net GND = R | A;
+            constraint anchored(A);
+          }
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        self.assertEqual(self._bad_edges(art.mesh), 0)
+
+    def test_disk_gets_release_holes_when_it_is_wide(self):
+        from soidlc import primitives as P
+        ctx = P.PrimitiveCtx(max_solid_span=30.0, hole_pitch=25.0,
+                             hole_size=5.0)
+        big = P.PRIMITIVES["disk"]([], {"R": _um(150)}, ctx)[0]
+        self.assertGreater(len(big.polygon.holes), 0)
+        small = P.PRIMITIVES["disk"]([], {"R": _um(10)}, ctx)[0]
+        self.assertEqual(len(small.polygon.holes), 0)
+
+    def test_disk_holes_stay_inside_the_rim(self):
+        """A hole clipped by the outline would be a notch in the edge, not a
+        release hole."""
+        from soidlc import primitives as P
+        ctx = P.PrimitiveCtx(max_solid_span=30.0, hole_pitch=25.0,
+                             hole_size=5.0)
+        R = 150.0
+        disk = P.PRIMITIVES["disk"]([], {"R": _um(R)}, ctx)[0]
+        for h in disk.polygon.holes:
+            for (x, y) in h:
+                self.assertLess(math.hypot(x, y), R,
+                                "a release hole reaches past the disk rim")
+
+
 if __name__ == "__main__":
     unittest.main()
