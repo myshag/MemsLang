@@ -677,5 +677,80 @@ class TestParallelPlate(unittest.TestCase):
                     "rotor and stator plates must not touch")
 
 
+
+class TestThermalActuators(unittest.TestCase):
+    def _bad_edges(self, mesh):
+        edges = Counter()
+        for (a, b, c) in mesh.triangles:
+            for e in ((a, b), (b, c), (c, a)):
+                edges[frozenset(e)] += 1
+        return sum(1 for v in edges.values() if v != 2)
+
+    def test_chevron_beams_are_inclined_and_paired(self):
+        from soidlc import primitives as P
+        shapes = P.PRIMITIVES["chevron"](
+            [], {"n": 3, "L": _um(200), "w": _um(6), "angle": 6.0},
+            P.PrimitiveCtx())
+        beams = [s for s in shapes if s.label == "chevron_beam"]
+        self.assertEqual(len(beams), 6)          # n pairs
+        self.assertEqual(len([s for s in shapes
+                              if s.label == "chevron_shuttle"]), 1)
+        self.assertFalse(M._is_rectilinear(beams[0].polygon.exterior),
+                         "a chevron beam must be inclined, not axis-aligned")
+
+    def test_chevron_extrudes_watertight(self):
+        """Inclined beams leave the voxel mesher for the general path, which
+        is exactly the path the ring fix had to repair."""
+        from soidlc import primitives as P
+        shapes = P.PRIMITIVES["chevron"](
+            [], {"n": 2, "L": _um(200), "w": _um(6), "angle": 6.0},
+            P.PrimitiveCtx())
+        for s in shapes:
+            with self.subTest(shape=s.label):
+                mesh = M.extrude_polygon(s.polygon, 0.0, 25.0, "DEVICE")
+                self.assertEqual(self._bad_edges(mesh), 0)
+
+    def test_chevron_shuttle_is_connected_to_every_beam(self):
+        """The shuttle is what the beams push; a gap there and the actuator
+        pushes nothing while still looking like a legal device."""
+        from soidlc import primitives as P
+        from soidlc import connectivity
+        shapes = P.PRIMITIVES["chevron"](
+            [], {"n": 3, "L": _um(200), "w": _um(6), "angle": 6.0},
+            P.PrimitiveCtx())
+        shuttle = [s for s in shapes if s.label == "chevron_shuttle"][0]
+        beams = [s for s in shapes if s.label == "chevron_beam"]
+        for b in beams:
+            self.assertTrue(
+                connectivity.touches(shuttle.polygon, b.polygon),
+                "a chevron beam does not reach the shuttle")
+
+    def test_chevron_anchors_hold_the_outer_beam_ends(self):
+        from soidlc import primitives as P
+        from soidlc import connectivity
+        shapes = P.PRIMITIVES["chevron"](
+            [], {"n": 3, "L": _um(200), "w": _um(6), "angle": 6.0},
+            P.PrimitiveCtx())
+        anchors = [s for s in shapes if s.label == "chevron_anchor"]
+        beams = [s for s in shapes if s.label == "chevron_beam"]
+        self.assertEqual(len(anchors), 2)
+        for b in beams:
+            self.assertTrue(
+                any(connectivity.touches(a.polygon, b.polygon)
+                    for a in anchors),
+                "a chevron beam has no anchored end")
+
+    def test_hot_arm_is_asymmetric(self):
+        from soidlc import primitives as P
+        shapes = P.PRIMITIVES["hot_arm"](
+            [], {"L": _um(200), "w_hot": _um(3), "w_cold": _um(12),
+                 "g": _um(4)}, P.PrimitiveCtx())
+        hot = [s for s in shapes if s.label == "hot_arm"][0]
+        cold = [s for s in shapes if s.label == "cold_arm"][0]
+        # the thin arm carries the higher resistance per length, so it runs
+        # hotter and expands more -- the asymmetry IS the actuator
+        self.assertLess(hot.polygon.area(), cold.polygon.area())
+
+
 if __name__ == "__main__":
     unittest.main()

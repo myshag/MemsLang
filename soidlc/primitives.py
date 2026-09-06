@@ -8,6 +8,7 @@ plus a :class:`PrimitiveCtx` carrying process defaults, and returns a list of
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -218,6 +219,94 @@ def prim_parallel_plate(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
     return shapes
 
 
+def prim_chevron(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
+    """V-beam thermal actuator: n pairs of beams inclined by `angle` degrees
+    from two anchors in to a central shuttle.
+
+    Current through the beams heats them and they expand.  Because they are
+    pre-inclined, that expansion resolves into shuttle motion along +y instead
+    of buckling in a direction nobody chose.  Large force, small stroke -- the
+    opposite trade to a comb drive, which is why grippers and latches use
+    chevrons and resonators do not.
+    """
+    n = int(round(_num(_arg(args, kwargs, 0, "n", 4))))
+    L = _um(_arg(args, kwargs, 1, "L", Quantity(200e-6, (1, 0, 0, 0))))
+    w = _um(_arg(args, kwargs, 2, "w", Quantity(6e-6, (1, 0, 0, 0))))
+    angle = _num(_arg(args, kwargs, 3, "angle", 6.0))     # degrees
+    if n < 1:
+        raise ValueError("chevron() needs at least one beam pair")
+
+    a = math.radians(angle)
+    dx = L * math.cos(a)
+    dy = L * math.sin(a)
+    shuttle_w = 20.0
+    pitch = 3 * w + 10.0
+
+    shapes: List[G.Shape] = []
+    y = -(n - 1) * pitch / 2.0
+    for _ in range(n):
+        # each beam runs from its anchor up to the shuttle centreline
+        shapes.append(G.Shape(
+            ctx.device_layer, G.wire([(-dx, y), (0.0, y + dy)], w),
+            "chevron_beam", mech="released"))
+        shapes.append(G.Shape(
+            ctx.device_layer, G.wire([(dx, y), (0.0, y + dy)], w),
+            "chevron_beam", mech="released"))
+        y += pitch
+
+    # shuttle spans every beam tip; tips sit at y + dy, so the bar must cover
+    # the full tip range, not just the anchor range
+    span = (n - 1) * pitch + 4 * w
+    shapes.append(G.Shape(
+        ctx.device_layer, G.rect(shuttle_w, span, 0.0, dy),
+        "chevron_shuttle", mech="released"))
+    # anchors at both ends of every beam row
+    anc_h = (n - 1) * pitch + 4 * w
+    for sign in (-1.0, 1.0):
+        shapes.append(G.Shape(
+            ctx.device_layer,
+            G.rect(30.0, anc_h, sign * (dx + 15.0 - w), 0.0),
+            "chevron_anchor", mech="anchored"))
+    return shapes
+
+
+def prim_hot_arm(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
+    """U-shaped hot-arm / cold-arm thermal actuator.
+
+    Both arms carry the same current, but the thin one has the higher
+    resistance per unit length, so it runs hotter and expands more.  The pair
+    is joined at the tip, so the difference bends the actuator toward the cold
+    arm -- it traces an arc, not a translation.
+    """
+    L = _um(_arg(args, kwargs, 0, "L", Quantity(200e-6, (1, 0, 0, 0))))
+    w_hot = _um(_arg(args, kwargs, 1, "w_hot", Quantity(3e-6, (1, 0, 0, 0))))
+    w_cold = _um(_arg(args, kwargs, 2, "w_cold", Quantity(12e-6, (1, 0, 0, 0))))
+    g = _um(_arg(args, kwargs, 3, "g", Quantity(4e-6, (1, 0, 0, 0))))
+    if w_hot >= w_cold:
+        raise ValueError("hot_arm() needs w_hot < w_cold: the asymmetry is "
+                         "what makes it an actuator")
+
+    y_hot = (w_hot + g) / 2.0
+    y_cold = -(w_cold + g) / 2.0
+    span = abs(y_hot - y_cold) + w_cold
+    return [
+        G.Shape(ctx.device_layer, G.rect(L, w_hot, 0.0, y_hot),
+                "hot_arm", mech="released"),
+        G.Shape(ctx.device_layer, G.rect(L, w_cold, 0.0, y_cold),
+                "cold_arm", mech="released"),
+        # tip yoke joining the two arms
+        G.Shape(ctx.device_layer,
+                G.rect(w_cold, span, L / 2.0 - w_cold / 2.0,
+                       (y_hot + y_cold) / 2.0),
+                "hot_arm_yoke", mech="released"),
+        # anchors at the driven end, one per arm (current in one, out the other)
+        G.Shape(ctx.device_layer, G.rect(24.0, 24.0, -L / 2.0 - 8.0, y_hot),
+                "hot_arm_anchor", mech="anchored"),
+        G.Shape(ctx.device_layer, G.rect(24.0, 24.0, -L / 2.0 - 8.0, y_cold),
+                "hot_arm_anchor", mech="anchored"),
+    ]
+
+
 def prim_gap_stop(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
     d = _um(_arg(args, kwargs, 0, "d"))
     return [G.Shape(ctx.device_layer, G.rect(max(d, 2.0), max(d, 2.0)),
@@ -252,6 +341,8 @@ PRIMITIVES = {
     "combdrive": prim_comb,    # combdrive renders its comb geometry
     "meander": prim_meander,
     "parallel_plate": prim_parallel_plate,
+    "chevron": prim_chevron,
+    "hot_arm": prim_hot_arm,
     "gap_stop": prim_gap_stop,
     "trench": prim_trench,
     "via_metal": prim_via_metal,
