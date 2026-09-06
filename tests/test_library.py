@@ -1023,5 +1023,85 @@ class TestTorsion(unittest.TestCase):
             env["f_res"](axis="theta")
 
 
+
+class TestTeeterTotter3D(unittest.TestCase):
+    """The 2D plane-stress solver cannot see this mode at all.
+
+    It has no out-of-plane degree of freedom, so a rocking mode is invisible
+    to it -- the repo's own record shows 3D finding three out-of-plane modes
+    where 2D saw none.  The 3D solid solver is therefore the only independent
+    check on k_theta = G*J/L and on the inertia accumulation, both of which
+    the lumped model would otherwise report unchallenged.
+    """
+
+    def test_first_mode_is_torsional_and_matches_the_lumped_model(self):
+        from soidlc.fem import solid3d
+        with open(os.path.join(EX, "teeter_totter_accel.soidl")) as f:
+            art = compile_source(f.read(), base_dir=EX)
+        self.assertEqual(art.errors, [], art.errors)
+        dev = art.process.device()
+        shapes = [s for s in art.result.shapes if s.layer == "DEVICE"]
+        m3 = solid3d.mesh_island_3d(shapes, dev.thickness, h=14.0)
+        freqs, vecs, dof_of = solid3d.modal3d(
+            m3, dev.E, dev.nu, 2330.0, dev.thickness * 1e-6, n_modes=3)
+        self.assertTrue(freqs)
+
+        f_lumped = art.model["f0_theta"].value
+        rel = abs(freqs[0] - f_lumped) / f_lumped
+        self.assertLess(rel, 0.15,
+                        f"3D mode1 {freqs[0]:.0f} Hz vs lumped "
+                        f"{f_lumped:.0f} Hz ({rel * 100:.1f}%)")
+
+        # torsional: out-of-plane displacement must flip sign across the hinge
+        above = below = 0.0
+        for i, node in enumerate(m3.nodes):
+            b = dof_of.get(i, -1)
+            if b < 0:
+                continue
+            uz = vecs[0][b + 2]
+            if node[1] > 20:
+                above += uz
+            elif node[1] < -20:
+                below += uz
+        self.assertLess(above * below, 0.0,
+                        "mode 1 is not antisymmetric about the hinge, so it "
+                        "is not the rocking mode this device is built for")
+
+
+class TestTorsionBarPlacement(unittest.TestCase):
+    """torsion_bar always grows in -x, so the right-hand bar of a mirror must
+    be mirrored by `attach`, not placed with `at`.
+
+    Placed with `at`, the right bar sits almost entirely inside the plate and
+    its anchor lands wholly inside it -- bolting the mirror to the substrate.
+    The device still compiles, still reports one clean island, and still
+    returns a plausible f0_theta, because neither k_theta nor J_m can see it.
+    """
+
+    def test_no_anchor_lies_inside_the_mirror(self):
+        from soidlc import connectivity
+        with open(os.path.join(EX, "micromirror.soidl")) as f:
+            art = compile_source(f.read(), base_dir=EX)
+        self.assertEqual(art.errors, [], art.errors)
+        dev = [s for s in art.result.shapes if s.layer == "DEVICE"]
+        mirror = [s for s in dev if s.label == "plate"][0]
+        for a in [s for s in dev if s.label == "anchor"]:
+            self.assertFalse(
+                connectivity.touches(a.polygon, mirror.polygon),
+                "a torsion anchor touches the mirror plate: the hinge is "
+                "bypassed and the mirror is rigidly held")
+
+    def test_both_bars_reach_the_mirror_symmetrically(self):
+        with open(os.path.join(EX, "micromirror.soidl")) as f:
+            art = compile_source(f.read(), base_dir=EX)
+        dev = [s for s in art.result.shapes if s.layer == "DEVICE"]
+        beams = [s for s in dev if s.label == "beam"]
+        self.assertEqual(len(beams), 2)
+        spans = sorted(round(b.polygon.bbox()[2] - b.polygon.bbox()[0], 3)
+                       for b in beams)
+        self.assertAlmostEqual(spans[0], spans[1], places=3,
+                               msg="one torsion bar is buried in the plate")
+
+
 if __name__ == "__main__":
     unittest.main()

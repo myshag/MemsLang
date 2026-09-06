@@ -679,13 +679,18 @@ class Elaborator:
                 if sh.layer == "DEVICE" and sh.mech == "released":
                     a_m2 = sh.polygon.area() * 1e-12
                     m += a_m2 * t * rho
-                    # inertia about the global x = 0 torsion axis: a rectangle
-                    # of width W about its own centre is W^2/12, carried to the
-                    # axis by the parallel-axis theorem
+                    # Mass moment of inertia about the HINGE, which is the
+                    # global x axis (the line y = 0).  That is the axis
+                    # torsion_bar defines: it draws its beam with dir = x, so
+                    # the bars twist about x and instances belong collinear on
+                    # y = 0.  A rectangle of height H about its own centre is
+                    # H^2/12, carried to the hinge by the parallel-axis
+                    # theorem.  Using the x extent here instead would report a
+                    # mirror four times too stiff without complaining.
                     x0, y0, x1, y1 = sh.polygon.bbox()
-                    w_m = (x1 - x0) * 1e-6
-                    cx_m = ((x0 + x1) / 2.0) * 1e-6
-                    j_m += a_m2 * t * rho * (w_m * w_m / 12.0 + cx_m * cx_m)
+                    h_m = (y1 - y0) * 1e-6
+                    cy_m = ((y0 + y1) / 2.0) * 1e-6
+                    j_m += a_m2 * t * rho * (h_m * h_m / 12.0 + cy_m * cy_m)
             kx = ir.model.get("k_x")
             if isinstance(kx, Quantity):
                 k += kx.value

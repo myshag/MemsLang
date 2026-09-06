@@ -1,0 +1,51 @@
+// Electrostatic torsional micromirror.
+//
+// A mirror plate hung on two collinear torsion bars.  Pulling one edge down
+// rotates the plate about the bar axis, so the mode is TORSIONAL: its
+// frequency comes from k_theta/J_m, not from k/m.  A bare f_res() on this
+// device raises rather than dividing a torsional stiffness by a mass, which
+// is why the requirement below names the axis.
+//
+// The plate carries NO release holes -- it is a mirror, and perforation would
+// scatter the beam.  It stays releasable because the backside etch removes the
+// substrate under it instead, which is the first use in this repo of the
+// TRENCH mask every process here has always declared.
+// Compile:  python -m soidlc.cli examples/micromirror.soidl
+
+import "flexures.soidl";
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 0.52 um; material = Au }
+    layer DEVICE { thickness = 25 um;   material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;    material = SiO2 }
+    layer HANDLE { thickness = 400 um;  material = Si }
+  }
+  masks {
+    mask SOID   -> etch(DEVICE, through)
+    mask TRENCH -> etch(HANDLE, through, backside)
+  }
+  rules {
+    release { hole_size = 5 um; hole_pitch = 25 um; max_solid_span = 30 um }
+  }
+}
+
+device micromirror {
+  // optical surface: unperforated
+  inst MIR = plate(500 um, 400 um, holes = none) at (0, 0);
+  // torsion bars are collinear on y = 0 -- that line is the hinge.
+  // Attached rather than placed: torsion_bar always grows in -x, so the
+  // right-hand one has to be mirrored or it ends up buried inside the mirror
+  // with its anchor bolting the plate straight to the substrate.
+  inst TL  = torsion_bar(L = 140 um, w = 6 um) attach (hinge -> MIR.left);
+  inst TR  = torsion_bar(L = 140 um, w = 6 um) attach (hinge -> MIR.right);
+  // backside cavity: releases the unperforated mirror and gives it clearance
+  // to rotate into
+  inst CAV = trench(560 um, 460 um) at (0, 0);
+
+  require f_res(axis = theta) >= 2 kHz;
+
+  net GND = MIR | TL.fixed | TR.fixed;
+  constraint anchored(TL.fixed, TR.fixed);
+}
