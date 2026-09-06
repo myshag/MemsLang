@@ -575,5 +575,28 @@ tests/           unittest suite (units, parsing, watertight meshes, FEM, etch, e
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -v
+python3 -m venv .venv && .venv/bin/python -m pip install -e . pytest
+.venv/bin/python -m pytest tests/ -q
 ```
+
+The venv is not optional. Without `scikit-fem` and `gmsh` the compiler does
+not fail — it degrades quietly: `solve` and `require` stop being evaluated
+(`closure: spec metrics could not be evaluated`) and `comb_resonator` reports
+29 kHz instead of the 20 kHz it solves for.
+
+**Optional: `ngspice`.** `tests/test_rom_spice.py` hands the exported BVD
+netlist to a real circuit simulator and requires the resonance back within
+1% of the FEM mode, with the peak standing at least 3× above the
+off-resonance floor. Nothing else checks that the `.cir` reduce.py writes is
+even valid SPICE. The tests skip when ngspice is absent (`brew install
+ngspice`).
+
+Measured end to end on `folded_flexure_resonator`: FEM mode 1 at 26516.5 Hz →
+ROM → netlist → ngspice peaks at 26515.0 Hz drawing 13.67 nA, and Q from the
+−3 dB bandwidth is 523.0 against the model's 524.2.
+
+One thing the BVD branch cannot express, and the Python ODE export can: the
+electrostatic force goes as V², so an AC drive with no DC bias produces force
+at 2f and the resonator does not respond at f at all — while a drive at f/2
+does ring it. The circuit model is a small-signal linearisation about the
+bias its header states.

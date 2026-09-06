@@ -35,15 +35,33 @@ def analyze(elab, art, h: float = 12.0,
             f"{mesh.n_free_dof} free dof (h = {h:g} um)")
         if not freqs:
             continue
-        art.report.append(
-            "fem    island #%d modes: %s" % (
-                cid, ", ".join(f"{f / 1e3:.2f} kHz" for f in freqs)))
         f0 = art.model.get("f0")
+        f0_th = art.model.get("f0_theta")
+        # A plane-stress solver has no out-of-plane degree of freedom, so a
+        # torsional device's operating mode is not in this list at all.  The
+        # in-plane modes it did find are real, and read exactly like a
+        # resonance unless they are labelled.
+        torsional_only = f0 is None and f0_th is not None
+        label = "in-plane modes" if torsional_only else "modes"
+        art.report.append(
+            "fem    island #%d %s: %s" % (
+                cid, label,
+                ", ".join(f"{f / 1e3:.2f} kHz" for f in freqs)))
         if f0 is not None:
             d = (freqs[0] - f0.value) / f0.value * 100.0
             art.report.append(
                 f"fem    mode 1 vs lumped f0: {freqs[0] / 1e3:.2f} kHz "
                 f"vs {f0.value / 1e3:.2f} kHz ({d:+.1f}%)")
+        elif torsional_only:
+            art.report.append(
+                f"fem    island #{cid}: this device's operating mode is "
+                f"torsional (f0_theta = {f0_th.value / 1e3:.2f} kHz) and is "
+                f"invisible to the plane-stress solver — use "
+                f"soidlc.fem.solid3d for it")
+            art.warnings.append(
+                f"fem: island #{cid} modes are IN-PLANE only; the torsional "
+                f"operating mode (f0_theta = {f0_th.value / 1e3:.2f} kHz) is "
+                f"not among them — use soidlc.fem.solid3d")
         if plot_prefix:
             from .. import femplot
             modes_png = f"{plot_prefix}_fem_island{cid}_modes.png"
