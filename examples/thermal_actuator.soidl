@@ -1,0 +1,44 @@
+// Chevron (V-beam) thermal actuator with a travel limit.
+//
+// Current through the inclined beams heats them; they expand, and the
+// pre-inclination turns that expansion into shuttle motion instead of a
+// buckle in a direction nobody chose.  Large force, small stroke -- the
+// opposite trade to a comb drive, which is why grippers and latches use
+// chevrons and resonators do not.
+//
+// Note on the netlist: the beams, shuttle and both anchors form ONE piece of
+// silicon, so they are one electrical island and one net.  A real driven
+// chevron needs its two anchors isolated from each other so current has a
+// path through the beams; in this SOI process that means a trench splitting
+// the shuttle, which is a separate design.  What is drawn here is the
+// mechanism, and the compiler reports it as the single island it truly is
+// rather than letting two nets pretend otherwise.
+// Compile:  python -m soidlc.cli examples/thermal_actuator.soidl
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 1 um;   material = Au }
+    layer DEVICE { thickness = 25 um;  material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;   material = SiO2 }
+    layer HANDLE { thickness = 400 um; material = Si }
+  }
+  rules {
+    release { hole_size = 5 um; hole_pitch = 25 um; max_solid_span = 30 um }
+  }
+}
+
+device thermal_actuator {
+  param dT_drive = 300 K;
+
+  inst A  = chevron(n = 6, L = 250 um, w = 6 um, angle = 5) at (0, 0);
+  // hard stop 4 um out: a chevron will happily crush whatever it reaches
+  inst ST = gap_stop(4 um) at (0, 120 um);
+  inst P1 = via_metal(100 um, 100 um) at (0 - 340 um, 0);
+  inst P2 = via_metal(100 um, 100 um) at (340 um, 0);
+
+  require stroke_thermal(dT_drive) >= 1 um;
+
+  net HOT = A;
+  net GND = ST;
+}

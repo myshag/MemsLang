@@ -8,6 +8,11 @@ from typing import List, Optional, Tuple
 
 # ---- expressions ----------------------------------------------------------
 @dataclass
+class Import:            # import "flexures.soidl";
+    path: str
+
+
+@dataclass
 class Num:
     value: float
     unit: Optional[str] = None

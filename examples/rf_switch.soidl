@@ -1,0 +1,45 @@
+// RF MEMS shunt switch: a suspended beam pulled down onto a gap-closing
+// electrode.
+//
+// This switch is deliberately operated PAST pull-in -- the snap IS the
+// switching action, not a failure.  So `require pull_in() <= 40 V` is an
+// upper bound on the drive supply, the opposite sense to a sensor, where
+// pull-in is the thing to stay below.  Same physics, opposite intent, which
+// is why the metric reports the voltage rather than passing judgement on it.
+// Compile:  python -m soidlc.cli examples/rf_switch.soidl
+
+import "flexures.soidl";
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 1 um;   material = Au }
+    layer DEVICE { thickness = 25 um;  material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;   material = SiO2 }
+    layer HANDLE { thickness = 400 um; material = Si }
+  }
+  rules {
+    release { hole_size = 5 um; hole_pitch = 25 um; max_solid_span = 30 um }
+  }
+}
+
+device rf_switch {
+  inst BEAM = plate(300 um, 60 um) at (0, 0);
+  inst SUS  = array(guided_beam(L = 350 um, w = 4 um, n_beams = 1),
+                    count = 4, place = corners(BEAM));
+  // the actuation electrode sits under the beam's top edge, narrow enough to
+  // clear the corner suspensions
+  inst GAP  = parallel_plate(W = 80 um, H = 30 um, g = 1.5 um, n = 2)
+              attach (rotor -> BEAM.top);
+  inst RF1  = via_metal(80 um, 80 um) at (0 - 240 um, 0 - 120 um);
+  inst RF2  = via_metal(80 um, 80 um) at (240 um, 0 - 120 um);
+
+  require pull_in() <= 40 V;
+
+  net ACT = GAP.stator;
+  net GND = BEAM | SUS.fixed;
+
+  isolate ACT from GND by trench;
+  constraint released(BEAM, SUS);
+  constraint anchored(SUS.fixed, GAP.stator);
+}

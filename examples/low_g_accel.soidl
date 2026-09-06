@@ -1,0 +1,38 @@
+// Low-g in-plane accelerometer on serpentine suspensions.
+//
+// Sensitivity goes as m/k, so a low-g device wants a heavy mass on a very
+// soft spring.  A straight beam soft enough would not fit on the die; a
+// serpentine folds the same compliance into a corner.
+// Compile:  python -m soidlc.cli examples/low_g_accel.soidl
+
+import "flexures.soidl";
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 1 um;   material = Au }
+    layer DEVICE { thickness = 25 um;  material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;   material = SiO2 }
+    layer HANDLE { thickness = 400 um; material = Si }
+  }
+  rules {
+    release { hole_size = 6 um; hole_pitch = 30 um; max_solid_span = 40 um }
+  }
+}
+
+device low_g_accel {
+  inst MASS  = plate(600 um, 400 um) at (0, 0);
+  inst SUS   = array(serpentine(L = 200 um, w = 3 um, n_turns = 8),
+                     count = 4, place = corners(MASS));
+  inst SENSE = combdrive(N = 40, Lf = 50 um) attach (rotor -> MASS.top);
+  inst PAD   = via_metal(120 um, 120 um) at (420 um, 260 um);
+
+  // a low-g device is defined by its low resonance
+  require f_res(MASS, SUS) <= 4 kHz;
+
+  net SIG = SENSE.stator;
+  net GND = MASS | SUS.fixed;
+  isolate SIG from GND by trench;
+  constraint released(MASS, SUS);
+  constraint anchored(SUS.fixed);
+}

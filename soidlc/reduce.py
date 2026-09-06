@@ -79,6 +79,30 @@ def find_transducers(all_shapes: List[G.Shape], dev_ast, proc
 
     out: List[Transducer] = []
     for owner, ss in sorted(by_owner.items()):
+        rp = [s for s in ss if s.label == "rotor_plate"]
+        sp = [s for s in ss if s.label == "stator_plate"]
+        if rp and sp:
+            # gap-closing pair: dC/dx = eps0*A/g^2, not the comb's
+            # 2*eps0*t/g.  The g^2 IS the nonlinearity that produces pull-in.
+            rb = rp[0].polygon.bbox()
+            near = min(sp, key=lambda s: abs(_center(s.polygon.bbox())[1]
+                                             - _center(rb)[1]))
+            nb = near.polygon.bbox()
+            g_um = (abs(_center(nb)[1] - _center(rb)[1])
+                    - (rb[3] - rb[1]) / 2.0 - (nb[3] - nb[1]) / 2.0)
+            if g_um <= 0:
+                continue
+            ov_um = max(0.0, min(rb[2], nb[2]) - max(rb[0], nb[0]))
+            n_pairs = len(rp)
+            area_m2 = n_pairs * (ov_um * 1e-6) * t_m
+            out.append(Transducer(
+                name=owner, net=net_of.get(owner, owner),
+                dcdx=EPS0 * area_m2 / ((g_um * 1e-6) ** 2),
+                C0=EPS0 * area_m2 / (g_um * 1e-6),
+                axis=1, sign=1.0, bbox=G.bbox_of(rp),
+                N=n_pairs, g_um=g_um, ov_um=ov_um))
+            continue
+
         rf = [s for s in ss if s.label == "rotor_finger"]
         sf = [s for s in ss if s.label == "stator_finger"]
         if not rf or not sf:

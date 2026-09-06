@@ -9,6 +9,7 @@ a textual report of every ``derive`` / ``check`` / ``solve``.
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -51,6 +52,15 @@ class Layer:
     E: float = 169e9          # Young's modulus, Pa
     rho: float = 2330.0       # density, kg/m^3
     nu: float = 0.22          # Poisson's ratio (plane-stress isotropic approx)
+
+
+# the SOIDL standard library ships inside the package (see pyproject
+# package-data), so an installed soidlc can still resolve `import "..."`
+_LIB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
+
+
+class SoidlImportError(Exception):
+    """A SOIDL `import` could not be resolved."""
 
 
 _LAYER_COLORS = {
@@ -114,8 +124,10 @@ def _assign_z(p: ProcessInfo) -> None:
 
 # ---------------------------------------------------------------------------
 class Elaborator:
-    def __init__(self, file: A.File):
+    def __init__(self, file: A.File, base_dir: Optional[str] = None):
         self.file = file
+        self.base_dir = base_dir
+        self._loaded_imports: set = set()
         self.components: Dict[str, A.Component] = {}
         self.devices: Dict[str, A.Device] = {}
         self.process = _default_process()
@@ -129,6 +141,11 @@ class Elaborator:
 
     def _index(self) -> None:
         proc = None
+        # imports first, so a local declaration of the same name shadows a
+        # library one -- the same rule as a user component shadowing a builtin
+        for d in self.file.decls:
+            if isinstance(d, A.Import):
+                self._load_import(d, self.base_dir)
         for d in self.file.decls:
             if isinstance(d, A.Process):
                 proc = d
@@ -138,6 +155,42 @@ class Elaborator:
                 self.devices[d.name] = d
         if proc is not None:
             self.process = self._build_process(proc)
+
+    # ---- imports --------------------------------------------------------
+    def _resolve_import(self, path: str, base_dir) -> str:
+        cands = []
+        if base_dir:
+            cands.append(os.path.join(base_dir, path))
+        cands.append(os.path.join(_LIB_DIR, path))
+        for c in cands:
+            if os.path.isfile(c):
+                return os.path.abspath(c)
+        looked = ", ".join(os.path.dirname(c) or "." for c in cands)
+        raise SoidlImportError(
+            f"cannot resolve import {path!r}; looked in {looked}")
+
+    def _load_import(self, node: A.Import, base_dir) -> None:
+        from .parser import parse as _parse
+        abspath = self._resolve_import(node.path, base_dir)
+        if abspath in self._loaded_imports:
+            return                  # diamond import: load once, not an error
+        self._loaded_imports.add(abspath)
+        with open(abspath) as f:
+            sub = _parse(f.read())
+        sub_dir = os.path.dirname(abspath)
+        # a library file's nested imports load first, so the file's own
+        # components shadow the ones it imports -- shadowing, one level down
+        for d in sub.decls:
+            if isinstance(d, A.Import):
+                self._load_import(d, sub_dir)
+        for d in sub.decls:
+            if isinstance(d, A.Component):
+                self.components[d.name] = d
+            elif not isinstance(d, A.Import):
+                raise SoidlImportError(
+                    f"{os.path.basename(abspath)}: an imported file may only "
+                    f"declare components, found "
+                    f"{type(d).__name__.lower()!r}")
 
     # ---- process --------------------------------------------------------
     def _build_process(self, proc: A.Process) -> ProcessInfo:
@@ -238,6 +291,8 @@ class Elaborator:
                     return Quantity(lay.E, (-1, 1, -2, 0))
                 if node.attr == "rho":
                     return Quantity(lay.rho, (-3, 1, 0, 0))
+                if node.attr == "nu":
+                    return Quantity(lay.nu, DIMLESS)
             return Sym(f"process.{layer}.{node.attr}")
         base = self._eval(obj, env)
         if isinstance(base, dict) and node.attr in base:
@@ -588,6 +643,17 @@ class Elaborator:
                         break
                 except Exception:
                     pass
+        # a derived torsional stiffness [N*m/rad] -> dim (2,1,-2,0)
+        for it in comp.items:
+            if isinstance(it, A.Derive) and it.target in ("k_theta",
+                                                          "k.theta"):
+                try:
+                    v = self._eval(it.expr, local)
+                    if isinstance(v, Quantity) and v.dim == (2, 1, -2, 0):
+                        model["k_theta"] = v
+                        break
+                except Exception:
+                    pass
         if "k_x" not in model and any(tag in comp.name for tag in
                ("flexure", "suspension", "leg", "spring")):
             L = local.get("L")
@@ -606,13 +672,31 @@ class Elaborator:
         rho = 2330.0
         m = 0.0
         k = 0.0
+        k_theta = 0.0
+        j_m = 0.0
         for name, ir in insts.items():
             for sh in ir.shapes:
                 if sh.layer == "DEVICE" and sh.mech == "released":
-                    m += sh.polygon.area() * 1e-12 * t * rho
+                    a_m2 = sh.polygon.area() * 1e-12
+                    m += a_m2 * t * rho
+                    # Mass moment of inertia about the HINGE, which is the
+                    # global x axis (the line y = 0).  That is the axis
+                    # torsion_bar defines: it draws its beam with dir = x, so
+                    # the bars twist about x and instances belong collinear on
+                    # y = 0.  A rectangle of height H about its own centre is
+                    # H^2/12, carried to the hinge by the parallel-axis
+                    # theorem.  Using the x extent here instead would report a
+                    # mirror four times too stiff without complaining.
+                    x0, y0, x1, y1 = sh.polygon.bbox()
+                    h_m = (y1 - y0) * 1e-6
+                    cy_m = ((y0 + y1) / 2.0) * 1e-6
+                    j_m += a_m2 * t * rho * (h_m * h_m / 12.0 + cy_m * cy_m)
             kx = ir.model.get("k_x")
             if isinstance(kx, Quantity):
                 k += kx.value
+            kt = ir.model.get("k_theta")
+            if isinstance(kt, Quantity):
+                k_theta += kt.value
         model: Dict[str, object] = {}
         if m > 0:
             model["m"] = Quantity(m, (0, 1, 0, 0))
@@ -621,6 +705,15 @@ class Elaborator:
         if m > 0 and k > 0:
             f0 = math.sqrt(k / m) / (2 * math.pi)
             model["f0"] = Quantity(f0, (0, 0, -1, 0))
+        # A torsional mode is governed by inertia, not mass.  Feeding a
+        # mirror's mass into sqrt(k/m) does not raise -- it returns a
+        # plausible, meaningless number -- so the torsional path is explicit.
+        if k_theta > 0:
+            model["k_theta"] = Quantity(k_theta, (2, 1, -2, 0))
+            if j_m > 0:
+                model["J_m"] = Quantity(j_m, (2, 1, 0, 0))
+                model["f0_theta"] = Quantity(
+                    math.sqrt(k_theta / j_m) / (2 * math.pi), (0, 0, -1, 0))
         return model
 
     # ---- connectivity extraction (geometry -> netlist, LVS-style) ------

@@ -1,0 +1,51 @@
+// Teeter-totter (see-saw) z-axis accelerometer.
+//
+// The proof mass is deliberately ASYMMETRIC about the torsion axis: more
+// silicon on one side of the hinge than the other.  Vertical acceleration
+// therefore applies a net torque and the plate rocks -- which is how a
+// strictly in-plane process senses the out-of-plane axis at all.  Two sense
+// electrodes under the two halves read the rotation differentially, rejecting
+// common-mode translation.
+//
+// The mode is torsional, so its frequency is k_theta/J_m.  The 2D
+// plane-stress solver cannot see this mode at all -- it has no out-of-plane
+// degree of freedom -- which is why this device is validated against the 3D
+// solid solver instead.
+// Compile:  python -m soidlc.cli examples/teeter_totter_accel.soidl
+
+import "flexures.soidl";
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 0.52 um; material = Au }
+    layer DEVICE { thickness = 25 um;   material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;    material = SiO2 }
+    layer HANDLE { thickness = 400 um;  material = Si }
+  }
+  masks {
+    mask SOID   -> etch(DEVICE, through)
+    mask TRENCH -> etch(HANDLE, through, backside)
+  }
+  rules {
+    release { hole_size = 6 um; hole_pitch = 30 um; max_solid_span = 40 um }
+  }
+}
+
+device teeter_totter_accel {
+  // hub straddling the hinge line y = 0, so the torsion bars attach ON the
+  // axis rather than at the midpoint of a lopsided plate's edge
+  inst HUB   = beam(400 um, 20 um, dir = x) at (0, 0);
+  // asymmetric mass: 300 um of plate above the hinge, 150 um below, so the
+  // centre of mass sits off-axis and vertical acceleration makes a torque
+  inst LONG  = plate(400 um, 300 um) at (0, 158 um);
+  inst SHORT = plate(400 um, 150 um) at (0, 0 - 83 um);
+  inst TL    = torsion_bar(L = 100 um, w = 5 um) attach (hinge -> HUB.left);
+  inst TR    = torsion_bar(L = 100 um, w = 5 um) attach (hinge -> HUB.right);
+  inst CAV   = trench(420 um, 500 um) at (0, 40 um);
+
+  require f_res(axis = theta) >= 1 kHz;
+
+  net GND = HUB | LONG | SHORT | TL.fixed | TR.fixed;
+  constraint anchored(TL.fixed, TR.fixed);
+}

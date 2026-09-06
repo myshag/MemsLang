@@ -1,0 +1,44 @@
+// Electrothermal microgripper: two chevron-driven jaws.
+//
+// Each jaw has its own chevron, so the pair can be driven together to grip or
+// differentially to rotate what is held.  A chevron is the right actuator
+// here for the same reason it is wrong in a resonator: it delivers large
+// force over a short stroke, which is what closing on an object needs.
+// Compile:  python -m soidlc.cli examples/microgripper.soidl
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 1 um;   material = Au }
+    layer DEVICE { thickness = 25 um;  material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;   material = SiO2 }
+    layer HANDLE { thickness = 400 um; material = Si }
+  }
+  rules {
+    release { hole_size = 5 um; hole_pitch = 25 um; max_solid_span = 30 um }
+  }
+}
+
+// A jaw: a long arm carried by the chevron shuttle, reaching out to the tip.
+component jaw(L = 300 um, w = 12 um) {
+  mech port base, tip;
+  geometry {
+    beam(L, w, dir = y) at (0, L/2);
+  }
+}
+
+device microgripper {
+  param dT_drive = 250 K;
+
+  inst AL = chevron(n = 4, L = 200 um, w = 6 um, angle = 5)
+            at (0 - 240 um, 0);
+  inst AR = chevron(n = 4, L = 200 um, w = 6 um, angle = 5)
+            at (240 um, 0);
+  inst JL = jaw(L = 300 um, w = 12 um) at (0 - 240 um, 14 um);
+  inst JR = jaw(L = 300 um, w = 12 um) at (240 um, 14 um);
+
+  require stroke_thermal(dT_drive) >= 1 um;
+
+  net LEFT  = AL | JL;
+  net RIGHT = AR | JR;
+}

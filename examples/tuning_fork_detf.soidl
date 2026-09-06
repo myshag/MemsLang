@@ -1,0 +1,65 @@
+// Double-ended tuning fork (DETF).
+//
+// Two parallel tines clamped at BOTH ends and driven anti-phase, so their
+// reaction moments cancel at the anchors -- that cancellation is what gives a
+// DETF its high Q.  Its frequency is set by the tine itself, not by a proof
+// mass, which makes it the sharpest test of the lumped model in this repo:
+// every other resonator here is a mass on a spring.
+// Compile:  python -m soidlc.cli examples/tuning_fork_detf.soidl --fem
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 0.52 um; material = Au }
+    layer DEVICE { thickness = 25 um;   material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;    material = SiO2 }
+    layer HANDLE { thickness = 400 um;  material = Si }
+  }
+  rules {
+    release { hole_size = 5 um; hole_pitch = 25 um; max_solid_span = 30 um }
+  }
+}
+
+// Two tines of length L and width w separated by `gap`, clamped into a shared
+// anchor pad at each end.
+//
+// A clamped-clamped beam's first mode is
+//   f0 = (4.730^2 / (2*pi*L^2)) * sqrt(E*I / (rho*A)),  I = t*w^3/12, A = t*w
+// so f0 scales as w/L^2.  The lumped model here uses the equivalent static
+// stiffness of two clamped-clamped beams in parallel, k = 2 * 192*E*I/L^3,
+// against the released tine mass -- a distributed resonator squeezed into a
+// mass-on-spring, which is exactly why the FEM comparison matters.
+component detf_tines(L = 400 um, w = 6 um, gap = 20 um) {
+  mech port fixed, tine;
+
+  derive k.x = 32 * (process.DEVICE.E * process.DEVICE.thickness * w^3) / L^3;
+
+  geometry {
+    beam(L, w, dir = y) at (0 - gap/2 - w/2, 0);
+    beam(L, w, dir = y) at (gap/2 + w/2, 0);
+    // shared anchor pads clamping both tines at each end, 4 um of overlap
+    anchor(gap + 2*w + 40 um, 40 um) at (0, L/2 + 20 um - 4 um);
+    anchor(gap + 2*w + 40 um, 40 um) at (0, 4 um - L/2 - 20 um);
+    // drive paddle at the left tine's midpoint, reaching out to the pad edge
+    // so a comb can attach to it -- a DETF has no shuttle of its own
+    beam((gap + 2*w + 40 um)/2 - gap/2 - w, 16 um, dir = x)
+        at (0 - (gap + 2*w + 40 um)/4 - gap/4 - w/2, 0);
+  }
+
+  check w >= 2 um;
+  check L/w >= 20 warn "short tine: the beam formula assumes slenderness";
+}
+
+device tuning_fork_detf {
+  inst T = detf_tines(L = 400 um, w = 6 um, gap = 20 um) at (0, 0);
+  inst D = combdrive(N = 20, Lf = 30 um, ov = 12 um)
+           attach (rotor -> T.left);
+
+  require f_res(T) >= 40 kHz;
+
+  net DRIVE = D.stator;
+  net GND   = T | T.fixed;
+
+  isolate DRIVE from GND by trench;
+  constraint anchored(T.fixed, D.stator);
+}

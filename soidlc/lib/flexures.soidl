@@ -1,0 +1,202 @@
+// SOIDL standard library: suspension elements.
+// Imported as:  import "flexures.soidl";
+//
+// Local origin of every flexure = its attachment point on the moving mass.
+// Each beam reaches 2 um into the mass and runs outboard to its anchor, so an
+// instance placed exactly on a mass edge is silicon-continuous with it -- the
+// connectivity check enforces that overlap, so do not trim it away.
+
+// n clamped-guided beams in parallel, stiff along y, compliant along x.
+// k = n * E * t * w^3 / L^3  (clamped-guided: both ends restrained in slope)
+component guided_beam(L = 200 um, w = 4 um, n_beams = 2, pitch = 12 um) {
+  mech port fixed, shuttle;
+
+  derive k.x = n_beams * (process.DEVICE.E * process.DEVICE.thickness * w^3) / L^3;
+
+  geometry {
+    repeat i in 0..n_beams-1 {
+      beam(L, w, dir = y) at (i * pitch, 2 um - L/2);
+    }
+    // truss tying the beam tops together, spanning them exactly
+    beam((n_beams - 1) * pitch + w, w, dir = x)
+        at ((n_beams - 1) * pitch/2, 0);
+    anchor((n_beams - 1) * pitch + w + 12 um, 20 um)
+        at ((n_beams - 1) * pitch/2, 2 um - L - 8 um);
+  }
+
+  check w >= 2 um;
+  check L/w <= 100 warn "very compliant beam, check buckling";
+}
+
+// A square ring of four bars: the outer drive frame of a decoupled gyroscope,
+// or any structure that must surround an inner mass.  W/H are the OUTER
+// dimensions; `bar` is the wall width.
+//
+// Horizontal bars span the full width; vertical ones are shortened by 2*bar.
+// The corner silicon is therefore covered exactly once (no double-counted
+// area) while the bars still abut, which is what connectivity needs to fuse
+// the four into one electrical island.
+component frame(W = 680 um, H = 680 um, bar = 40 um) {
+  mech port body;
+
+  geometry {
+    beam(W, bar, dir = x) at (0, H/2 - bar/2);
+    beam(W, bar, dir = x) at (0, bar/2 - H/2);
+    beam(H - 2*bar, bar, dir = y) at (bar/2 - W/2, 0);
+    beam(H - 2*bar, bar, dir = y) at (W/2 - bar/2, 0);
+  }
+
+  check bar >= 2 um;
+  check W > 2*bar;
+  check H > 2*bar;
+}
+
+// Folded flexure: each fold is an inboard beam and an outboard beam joined by
+// a truss at the far end, so the pair acts as two guided beams in SERIES.
+//
+// Folding is what relieves axial stress.  A straight guided beam has to
+// stretch in order to deflect, so it stiffens with amplitude and its
+// resonance drifts; a folded one lets the truss take up that extension, and
+// f0 stays put.
+//
+// The two beams are NOT the same length, and the geometry is why.  A fold's
+// anchor sits beside its own attachment point -- that adjacency is the whole
+// point of the topology -- so it has to stand off from the mass edge by
+// `gap`, and the outboard beam therefore ends `gap` short of the inboard one.
+// Two cantilevers in series add compliances:
+//
+//   1/k_fold = L_in^3/(E*t*w^3) + L_out^3/(E*t*w^3)
+//   k_fold   = E*t*w^3 / (L_in^3 + L_out^3),   L_out = L - gap - 2 um
+//
+// Pretending both were L would understate the stiffness by about a quarter at
+// the default proportions, and nothing in the compiler would object: the
+// geometry is legal and `derive` is just arithmetic.  The FEM check on
+// examples/folded_flexure_resonator.soidl is what holds this formula honest.
+//
+// Two more things this layout gets wrong if drawn carelessly, neither of
+// which raises an error:
+//   * an anchor placed on the mass side (local +y) bolts the proof mass
+//     straight to the substrate -- one legal island, no LVS complaint, and a
+//     resonator an order of magnitude too stiff;
+//   * an outboard beam that also reaches into the mass ties the mass to the
+//     anchor through a few um of silicon, with the same effect.
+// Both are covered by tests in tests/test_library.py.
+component folded_flexure(L = 200 um, w = 4 um, n_folds = 2,
+                         truss_w = 8 um, pitch = 30 um, gap = 30 um) {
+  mech port fixed, shuttle;
+
+  derive k.x = n_folds * (process.DEVICE.E * process.DEVICE.thickness * w^3)
+               / (L^3 + (L - gap - 2 um)^3);
+
+  geometry {
+    repeat i in 0..n_folds-1 {
+      // inboard beam: reaches 2 um into the mass, runs out to the truss
+      beam(L, w, dir = y) at (i * pitch, 2 um - L/2);
+      // outboard beam: from the truss back in, stopping `gap` short of the
+      // mass so it grips the anchor and nothing else
+      beam(L - gap + 4 um, w, dir = y)
+          at (i * pitch + pitch/2, 4 um - gap/2 - L/2 - 1 um);
+      // fold truss joining the two beam tips at the far end
+      beam(pitch/2 + w, truss_w, dir = x)
+          at (i * pitch + pitch/4, 2 um - L - truss_w/2 + w/2);
+      // anchor: grips the outboard beam only, standing clear of the mass
+      anchor(16 um, gap - 6 um) at (i * pitch + pitch/2, 3 um - gap/2 - 3 um);
+    }
+  }
+
+  check w >= 2 um;
+  check pitch > 4*w;
+  check gap > 12 um;
+  check L > 3*gap;
+}
+
+// Serpentine (meander) spring: n_turns guided spans in SERIES, so it is
+// n_turns times softer than one span.  Used where a low-g device needs a very
+// compliant suspension without a millimetre of straight beam on the die.
+//
+//   k = E*t*w^3 / (n_turns * L^3)
+//
+// The geometry comes from the `meander` primitive, which draws the whole
+// spring as ONE continuous path.  Drawing it as separate spans here would put
+// them in parallel through the proof mass instead of in series -- rigid
+// device, no error reported -- so the path is generated rather than assembled.
+component serpentine(L = 120 um, w = 3 um, n_turns = 4, pitch = 12 um) {
+  mech port fixed, shuttle;
+
+  derive k.x = (process.DEVICE.E * process.DEVICE.thickness * w^3)
+               / (n_turns * L^3);
+
+  geometry {
+    meander(L, w, n_turns, pitch) at (0, 0);
+  }
+
+  check w >= 2 um;
+  check pitch > 2*w;
+  check n_turns >= 2;
+  check L > 60 um;
+}
+
+// Crab-leg flexure: a thigh along x and a shin along y, anchored at the shin.
+// Compact -- it folds a soft suspension into a square footprint -- but it is
+// a two-member FRAME, and this component deliberately carries NO stiffness
+// formula.
+//
+// Why: for motion along x the thigh is loaded AXIALLY, so it contributes
+// almost no bending compliance; the compliance comes from the shin bending
+// plus the joint rotation the guided shuttle end resists.  Solving that
+// properly is a frame analysis, not a substitution into the cantilever
+// formula.  The textbook-looking expression
+//     k_x = E*t*w^3 / (Lx^3 * (1 + 3*Ly/Lx))
+// was measured against plane-stress FEM at Lx=150, Ly=60, w=4 and came out
+// 38.7% low (67.4 kHz measured against 48.6 kHz predicted).  Shipping it
+// would put a confident wrong number into `solve` and `require`.
+//
+// So: use crab_leg for its geometry and take its stiffness from --fem.  A
+// device suspended only on crab legs contributes no k_x, so the lumped model
+// reports no f0 and f_res() raises rather than inventing one -- which is the
+// intended behaviour, not an oversight.
+component crab_leg(Lx = 150 um, Ly = 60 um, w = 4 um) {
+  mech port fixed, shuttle;
+
+  geometry {
+    beam(Lx, w, dir = x) at (2 um - Lx/2, 0);              // thigh
+    beam(Ly, w, dir = y) at (2 um - Lx + w/2, 0 - Ly/2);   // shin
+    anchor(20 um, 20 um) at (2 um - Lx + w/2, 0 - Ly - 8 um);
+  }
+
+  check w >= 2 um;
+  check Lx > 4*w;
+}
+
+// Torsion bar: a beam loaded in TWIST rather than bending -- the hinge of a
+// scanning mirror or a teeter-totter z-accelerometer.
+//
+// For a rectangular section with a = max(t,w)/2 and b = min(t,w)/2 the
+// torsion constant is
+//   J = a*b^3 * (16/3 - 3.36*(b/a)*(1 - b^4/(12*a^4)))
+// and k_theta = G*J/L with G = E / (2*(1+nu)).  Two bars on opposite sides of
+// a plate act in parallel.
+//
+// A torsional mode is governed by the mass moment of inertia, not the mass,
+// so a device on these bars reports f0_theta and NOT f0.  Calling a bare
+// f_res() on it raises rather than returning sqrt(k/m) with a mass that does
+// not belong in the expression.
+component torsion_bar(L = 120 um, w = 6 um) {
+  mech port fixed, hinge;
+
+  derive k_theta = (process.DEVICE.E / (2 * (1 + process.DEVICE.nu)))
+                   * ((max(process.DEVICE.thickness, w) / 2)
+                      * (min(process.DEVICE.thickness, w) / 2)^3
+                      * (16/3 - 3.36 * (min(process.DEVICE.thickness, w)
+                                        / max(process.DEVICE.thickness, w))
+                         * (1 - (min(process.DEVICE.thickness, w) / 2)^4
+                              / (12 * (max(process.DEVICE.thickness, w) / 2)^4))))
+                   / L;
+
+  geometry {
+    beam(L, w, dir = x) at (2 um - L/2, 0);
+    anchor(24 um, 24 um) at (2 um - L - 10 um, 0);
+  }
+
+  check w >= 2 um;
+}

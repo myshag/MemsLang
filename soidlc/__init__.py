@@ -36,9 +36,10 @@ def compile_source(src: str, device: Optional[str] = None,
                    out_prefix: Optional[str] = None,
                    include_handle: bool = True,
                    fem: bool = False, fem_h: float = 12.0,
-                   fem_closure: bool = False) -> Artifacts:
+                   fem_closure: bool = False,
+                   base_dir: Optional[str] = None) -> Artifacts:
     ast = parse(src)
-    elab = Elaborator(ast)
+    elab = Elaborator(ast, base_dir=base_dir)
 
     # design closure: solve free parameters against the spec, then do the
     # final (loud) elaboration with the solved values
@@ -73,5 +74,7 @@ def compile_source(src: str, device: Optional[str] = None,
 
 
 def compile_file(path: str, **kw) -> Artifacts:
+    # imports in the source resolve relative to the file that wrote them
+    kw.setdefault("base_dir", os.path.dirname(os.path.abspath(path)))
     with open(path) as f:
         return compile_source(f.read(), **kw)

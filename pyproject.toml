@@ -25,3 +25,9 @@ web = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
 
 [tool.setuptools]
 packages = ["soidlc", "soidlc.fem", "webapp", "webapp.backend"]
+
+# `packages` is an explicit list, so non-Python files are not picked up by
+# default -- without this the SOIDL standard library works from a checkout and
+# silently vanishes on `pip install`.
+[tool.setuptools.package-data]
+soidlc = ["lib/*.soidl"]

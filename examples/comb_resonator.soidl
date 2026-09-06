@@ -2,6 +2,8 @@
 // clamped-guided beam-pair flexures, drive + sense combs on the edges.
 // Compile:  python -m soidlc.cli examples/comb_resonator.soidl
 
+import "flexures.soidl";
+
 process soi25 {
   stack {
     layer METAL  { thickness = 0.52 um; material = Au }
@@ -32,27 +34,6 @@ process soi25 {
   }
 }
 
-component beam_flexure(L = 200 um, w = 4 um, n_beams = 2) {
-  mech port fixed, shuttle;
-
-  // n clamped-guided beams in parallel, each k = 12*E*I/L^3 = E*t*w^3/L^3
-  derive k.x = n_beams * (process.DEVICE.E * process.DEVICE.thickness * w^3) / L^3;
-
-  geometry {
-    repeat i in 0..n_beams-1 {
-      beam(L, w, dir = y) at (i * (2*w + 8 um), 2 um - L/2);
-    }
-    // truss tying the beam tops into the shuttle (spans the beams exactly)
-    beam((n_beams - 1) * (2*w + 8 um) + w, w, dir = x)
-        at ((n_beams - 1) * (w + 4 um), 0);
-    anchor((n_beams - 1) * (2*w + 8 um) + w + 12 um, 20 um)
-        at ((n_beams - 1) * (w + 4 um), 2 um - L - 8 um);
-  }
-
-  check w >= 2 um;
-  check L/w <= 100 warn "very compliant beam, check buckling";
-}
-
 component combdrive(N = 24, g = 2 um, ov = 20 um, wf = 3 um, Lf = 40 um) {
   mech port rotor;
   elec port stator, rotor_el;
@@ -70,7 +51,7 @@ device comb_resonator {
   param V_drive   = 30 V;
 
   inst M  = plate(300 um, 300 um) at (0, 0);
-  inst S  = array(beam_flexure(L = 220 um, w = 4 um), count = 4,
+  inst S  = array(guided_beam(L = 220 um, w = 4 um, n_beams = 2), count = 4,
                   place = corners(M));
   // combs on the left/right edges: they drive along x, the compliant axis
   // of the vertical flexure beams (the corner flexures hang above/below

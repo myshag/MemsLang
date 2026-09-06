@@ -55,7 +55,9 @@ class Parser:
     def parse_file(self) -> A.File:
         decls = []
         while not self.at("EOF"):
-            if self.at("KEYWORD", "process"):
+            if self.at("KEYWORD", "import"):
+                decls.append(self.parse_import())
+            elif self.at("KEYWORD", "process"):
                 decls.append(self.parse_process())
             elif self.at("KEYWORD", "component"):
                 decls.append(self.parse_component())
@@ -70,6 +72,13 @@ class Parser:
                     f"(line {t.line})"
                 )
         return A.File(decls)
+
+    def parse_import(self) -> A.Import:
+        """import "flexures.soidl";  -- top level only."""
+        self.eat("KEYWORD", "import")
+        path = self.eat("STRING").text
+        self.accept("PUNCT", ";")
+        return A.Import(path)
 
     # ---- process ---------------------------------------------------------
     def parse_process(self) -> A.Process:
