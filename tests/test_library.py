@@ -946,5 +946,82 @@ class TestMetalRouting(unittest.TestCase):
         self.assertGreater(rt[0].polygon.area(), 0.0)
 
 
+
+class TestTorsion(unittest.TestCase):
+    """The failure mode the spec called the most dangerous in this project.
+
+    _extract_device_model computes f0 = sqrt(k/m) from released area, which is
+    purely translational.  Feed a torsional mirror into it and it does not
+    raise -- it returns a plausible, meaningless number.  Silent wrongness is
+    worse than an error, so the torsional path is explicit and the mismatched
+    case is made to raise.
+    """
+
+    SRC = TestImportResolution.PROC + """
+      import "flexures.soidl";
+      device mirror {
+        inst PL = plate(400 um, 200 um, holes = none) at (0, 0);
+        inst TL = torsion_bar(L = 120 um, w = 6 um) at (0 - 200 um, 0);
+        inst TR = torsion_bar(L = 120 um, w = 6 um) at (200 um, 0);
+        net GND = PL | TL.fixed | TR.fixed;
+        constraint anchored(TL.fixed, TR.fixed);
+      }
+    """
+
+    def test_torsional_model_is_reported(self):
+        art = compile_source(self.SRC)
+        self.assertEqual(art.errors, [], art.errors)
+        for key in ("k_theta", "J_m", "f0_theta"):
+            self.assertIn(key, art.model)
+        self.assertGreater(art.model["f0_theta"].value, 1e3)
+
+    def test_no_translational_f0_is_invented(self):
+        art = compile_source(self.SRC)
+        self.assertNotIn("f0", art.model)
+        self.assertNotIn("k", art.model)
+
+    def test_bare_f_res_raises_on_a_purely_torsional_device(self):
+        from soidlc import metrics
+        art = compile_source(self.SRC)
+        env = metrics.build_env(art.elab, art.result)
+        with self.assertRaises(metrics.MetricError) as cm:
+            env["f_res"]()
+        self.assertIn("torsional", str(cm.exception))
+
+    def test_f_res_axis_theta_returns_the_torsional_mode(self):
+        from soidlc import metrics
+        art = compile_source(self.SRC)
+        env = metrics.build_env(art.elab, art.result)
+        self.assertAlmostEqual(env["f_res"](axis="theta").value,
+                               art.model["f0_theta"].value, places=6)
+
+    def test_shorter_bar_is_stiffer(self):
+        long = compile_source(self.SRC)
+        short = compile_source(self.SRC.replace("L = 120 um", "L = 60 um"))
+        self.assertGreater(short.model["f0_theta"].value,
+                           long.model["f0_theta"].value)
+        # k_theta ~ 1/L, so halving L doubles it and f0 goes up by sqrt(2)
+        self.assertAlmostEqual(
+            short.model["f0_theta"].value / long.model["f0_theta"].value,
+            2 ** 0.5, delta=0.05)
+
+    def test_f_res_axis_theta_raises_on_a_translational_device(self):
+        from soidlc import metrics
+        src = TestImportResolution.PROC + """
+          import "flexures.soidl";
+          device d {
+            inst M = plate(200 um, 200 um) at (0, 0);
+            inst S = array(guided_beam(L = 200 um, w = 4 um), count = 4,
+                           place = corners(M));
+            net GND = M | S.fixed;
+            constraint anchored(S.fixed);
+          }
+        """
+        art = compile_source(src)
+        env = metrics.build_env(art.elab, art.result)
+        with self.assertRaises(metrics.MetricError):
+            env["f_res"](axis="theta")
+
+
 if __name__ == "__main__":
     unittest.main()

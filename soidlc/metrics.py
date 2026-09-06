@@ -87,6 +87,29 @@ def build_env(elab, res) -> Dict[str, object]:
         return b
 
     def f_res(*_a, **_k) -> Quantity:
+        """Resonant frequency.  `axis = theta` asks for the torsional mode.
+
+        A torsional mode is governed by the mass moment of inertia, not the
+        mass, so there is no honest translational answer for a device that has
+        only a torsional one -- sqrt(k/m) would return a plausible, meaningless
+        number.  This raises instead.
+        """
+        axis = _k.get("axis")
+        axis_name = getattr(axis, "id", axis)      # bare `theta` arrives as a name
+        if axis_name in ("theta", "torsion", "torsional"):
+            v = model.get("f0_theta")
+            if not isinstance(v, Quantity):
+                raise MetricError(
+                    "f_res(axis = theta): this device has no torsional mode "
+                    "(no k_theta was derived)")
+            return v
+        if not isinstance(model.get("f0"), Quantity) \
+                and isinstance(model.get("f0_theta"), Quantity):
+            raise MetricError(
+                "this device has only a torsional mode; call "
+                "f_res(axis = theta). A translational f_res would divide a "
+                "torsional stiffness by a mass and return a meaningless "
+                "number")
         q = _model_q("f0", "resonant frequency")
         return _q(q.value * cal.get("f_res", 1.0), q.dim)
 

@@ -167,3 +167,36 @@ component crab_leg(Lx = 150 um, Ly = 60 um, w = 4 um) {
   check w >= 2 um;
   check Lx > 4*w;
 }
+
+// Torsion bar: a beam loaded in TWIST rather than bending -- the hinge of a
+// scanning mirror or a teeter-totter z-accelerometer.
+//
+// For a rectangular section with a = max(t,w)/2 and b = min(t,w)/2 the
+// torsion constant is
+//   J = a*b^3 * (16/3 - 3.36*(b/a)*(1 - b^4/(12*a^4)))
+// and k_theta = G*J/L with G = E / (2*(1+nu)).  Two bars on opposite sides of
+// a plate act in parallel.
+//
+// A torsional mode is governed by the mass moment of inertia, not the mass,
+// so a device on these bars reports f0_theta and NOT f0.  Calling a bare
+// f_res() on it raises rather than returning sqrt(k/m) with a mass that does
+// not belong in the expression.
+component torsion_bar(L = 120 um, w = 6 um) {
+  mech port fixed, hinge;
+
+  derive k_theta = (process.DEVICE.E / (2 * (1 + process.DEVICE.nu)))
+                   * ((max(process.DEVICE.thickness, w) / 2)
+                      * (min(process.DEVICE.thickness, w) / 2)^3
+                      * (16/3 - 3.36 * (min(process.DEVICE.thickness, w)
+                                        / max(process.DEVICE.thickness, w))
+                         * (1 - (min(process.DEVICE.thickness, w) / 2)^4
+                              / (12 * (max(process.DEVICE.thickness, w) / 2)^4))))
+                   / L;
+
+  geometry {
+    beam(L, w, dir = x) at (2 um - L/2, 0);
+    anchor(24 um, 24 um) at (2 um - L - 10 um, 0);
+  }
+
+  check w >= 2 um;
+}

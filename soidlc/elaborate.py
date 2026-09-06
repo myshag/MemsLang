@@ -291,6 +291,8 @@ class Elaborator:
                     return Quantity(lay.E, (-1, 1, -2, 0))
                 if node.attr == "rho":
                     return Quantity(lay.rho, (-3, 1, 0, 0))
+                if node.attr == "nu":
+                    return Quantity(lay.nu, DIMLESS)
             return Sym(f"process.{layer}.{node.attr}")
         base = self._eval(obj, env)
         if isinstance(base, dict) and node.attr in base:
@@ -641,6 +643,17 @@ class Elaborator:
                         break
                 except Exception:
                     pass
+        # a derived torsional stiffness [N*m/rad] -> dim (2,1,-2,0)
+        for it in comp.items:
+            if isinstance(it, A.Derive) and it.target in ("k_theta",
+                                                          "k.theta"):
+                try:
+                    v = self._eval(it.expr, local)
+                    if isinstance(v, Quantity) and v.dim == (2, 1, -2, 0):
+                        model["k_theta"] = v
+                        break
+                except Exception:
+                    pass
         if "k_x" not in model and any(tag in comp.name for tag in
                ("flexure", "suspension", "leg", "spring")):
             L = local.get("L")
@@ -659,13 +672,26 @@ class Elaborator:
         rho = 2330.0
         m = 0.0
         k = 0.0
+        k_theta = 0.0
+        j_m = 0.0
         for name, ir in insts.items():
             for sh in ir.shapes:
                 if sh.layer == "DEVICE" and sh.mech == "released":
-                    m += sh.polygon.area() * 1e-12 * t * rho
+                    a_m2 = sh.polygon.area() * 1e-12
+                    m += a_m2 * t * rho
+                    # inertia about the global x = 0 torsion axis: a rectangle
+                    # of width W about its own centre is W^2/12, carried to the
+                    # axis by the parallel-axis theorem
+                    x0, y0, x1, y1 = sh.polygon.bbox()
+                    w_m = (x1 - x0) * 1e-6
+                    cx_m = ((x0 + x1) / 2.0) * 1e-6
+                    j_m += a_m2 * t * rho * (w_m * w_m / 12.0 + cx_m * cx_m)
             kx = ir.model.get("k_x")
             if isinstance(kx, Quantity):
                 k += kx.value
+            kt = ir.model.get("k_theta")
+            if isinstance(kt, Quantity):
+                k_theta += kt.value
         model: Dict[str, object] = {}
         if m > 0:
             model["m"] = Quantity(m, (0, 1, 0, 0))
@@ -674,6 +700,15 @@ class Elaborator:
         if m > 0 and k > 0:
             f0 = math.sqrt(k / m) / (2 * math.pi)
             model["f0"] = Quantity(f0, (0, 0, -1, 0))
+        # A torsional mode is governed by inertia, not mass.  Feeding a
+        # mirror's mass into sqrt(k/m) does not raise -- it returns a
+        # plausible, meaningless number -- so the torsional path is explicit.
+        if k_theta > 0:
+            model["k_theta"] = Quantity(k_theta, (2, 1, -2, 0))
+            if j_m > 0:
+                model["J_m"] = Quantity(j_m, (2, 1, 0, 0))
+                model["f0_theta"] = Quantity(
+                    math.sqrt(k_theta / j_m) / (2 * math.pi), (0, 0, -1, 0))
         return model
 
     # ---- connectivity extraction (geometry -> netlist, LVS-style) ------
