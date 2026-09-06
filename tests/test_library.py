@@ -835,5 +835,75 @@ class TestActuatorMetrics(unittest.TestCase):
         self.assertAlmostEqual(exact / approx, 1.0, delta=0.05)
 
 
+
+class TestBacksideTrench(unittest.TestCase):
+    """The half of the process nothing could reach.
+
+    Every example process declares `layer HANDLE` and
+    `mask TRENCH -> etch(HANDLE, through, backside)`, and until now nothing
+    used them: prim_trench returned [] and build_mesh laid the handle down as
+    an unbroken slab.  A membrane or a torsional mirror is not expressible
+    until the substrate can have a hole in it.
+    """
+
+    PROC = TestImportResolution.PROC
+
+    BASE = """
+      device d {
+        inst M = plate(400 um, 400 um) at (0, 0);
+        inst A = anchor(40 um, 40 um) at (0, 0 - 220 um);
+        net GND = M | A;
+        constraint anchored(A);
+      }
+    """
+    HOLED = """
+      device d {
+        inst M = plate(400 um, 400 um) at (0, 0);
+        inst A = anchor(40 um, 40 um) at (0, 0 - 220 um);
+        inst T = trench(300 um, 300 um) at (0, 0);
+        net GND = M | A;
+        constraint anchored(A);
+      }
+    """
+
+    def _bad_edges(self, mesh):
+        edges = Counter()
+        for (a, b, c) in mesh.triangles:
+            for e in ((a, b), (b, c), (c, a)):
+                edges[frozenset(e)] += 1
+        return sum(1 for v in edges.values() if v != 2)
+
+    def test_trench_removes_handle_silicon(self):
+        a = compile_source(self.PROC + self.BASE)
+        b = compile_source(self.PROC + self.HOLED)
+        self.assertEqual(a.errors, [], a.errors)
+        self.assertEqual(b.errors, [], b.errors)
+        self.assertGreater(len(b.mesh.triangles), len(a.mesh.triangles),
+                           "a hole in the slab means more triangles, not the "
+                           "same mesh -- the trench was a no-op")
+
+    def test_trenched_mesh_is_still_watertight(self):
+        art = compile_source(self.PROC + self.HOLED)
+        self.assertEqual(self._bad_edges(art.mesh), 0)
+
+    def test_trench_creates_no_electrical_island(self):
+        """TRENCH is not DEVICE silicon, so it must not appear as a net or
+        change the netlist."""
+        a = compile_source(self.PROC + self.BASE)
+        b = compile_source(self.PROC + self.HOLED)
+        self.assertEqual(b.errors, [], b.errors)
+        n_a = sum(1 for l in a.report if l.startswith("net    "))
+        n_b = sum(1 for l in b.report if l.startswith("net    "))
+        self.assertEqual(n_a, n_b)
+
+    def test_trench_is_not_extruded_as_solid(self):
+        """It is an absence of substrate, not a block of silicon."""
+        art = compile_source(self.PROC + self.HOLED)
+        self.assertTrue(any(s.layer == "TRENCH" for s in art.result.shapes))
+        groups = {t for t in getattr(art.mesh, "groups", [])} \
+            if hasattr(art.mesh, "groups") else set()
+        self.assertNotIn("TRENCH", groups)
+
+
 if __name__ == "__main__":
     unittest.main()

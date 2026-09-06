@@ -330,8 +330,17 @@ def prim_gap_stop(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
 
 
 def prim_trench(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
-    # an isolation trench is an *absence* of silicon; not extruded as solid.
-    return []
+    """A backside etch opening: an *absence* of substrate, not silicon.
+
+    Emitted on the pseudo-layer TRENCH, which is deliberately not part of the
+    process stack.  build3d subtracts these footprints from the HANDLE slab
+    and from the oxide beneath them instead of extruding them as solid, and
+    the connectivity extractor ignores them because they are not DEVICE -- so
+    a trench can never create or break an electrical island.
+    """
+    W = _um(_arg(args, kwargs, 0, "W", Quantity(200e-6, (1, 0, 0, 0))))
+    H = _um(_arg(args, kwargs, 1, "H", Quantity(200e-6, (1, 0, 0, 0))))
+    return [G.Shape("TRENCH", G.rect(W, H), "trench", mech="anchored")]
 
 
 def prim_via_metal(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
