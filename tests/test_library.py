@@ -600,5 +600,36 @@ class TestSerpentineFEM(unittest.TestCase):
         self.assertGreater(paths[0].polygon.area(), 0.0)
 
 
+
+class TestDETF(unittest.TestCase):
+    """A DETF is distributed, not a mass on a spring.
+
+    Every other resonator here has an obvious proof mass; a tuning fork's
+    frequency comes from the tine itself, so squeezing it into
+    f0 = sqrt(k/m) is the least favourable case for the lumped model in this
+    repo.  Measured agreement is +1.8%, which is better than the design
+    expected -- worth pinning so a future change to _extract_device_model
+    cannot quietly degrade it.
+    """
+
+    def test_lumped_f0_agrees_with_fem(self):
+        with open(os.path.join(EX, "tuning_fork_detf.soidl")) as f:
+            art = compile_source(f.read(), fem=True, fem_h=8.0, base_dir=EX)
+        self.assertEqual(art.errors, [], art.errors)
+        cmp = [l for l in art.report
+               if l.startswith("fem") and "vs lumped" in l]
+        self.assertTrue(cmp, art.report)
+        pct = float(cmp[0].rsplit("(", 1)[1].rstrip("%)"))
+        self.assertLess(abs(pct), 15.0, cmp[0])
+
+    def test_drive_comb_is_anchored_not_floating(self):
+        """A DETF has no shuttle, so the comb rotor needs a paddle on a tine.
+        Without it the rotor is a released island with nothing holding it and
+        would detach during release."""
+        with open(os.path.join(EX, "tuning_fork_detf.soidl")) as f:
+            art = compile_source(f.read(), base_dir=EX)
+        self.assertEqual(art.errors, [], art.errors)
+
+
 if __name__ == "__main__":
     unittest.main()
