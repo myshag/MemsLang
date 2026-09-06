@@ -13,12 +13,23 @@ from __future__ import annotations
 import math
 from typing import Dict, List
 
+from . import geometry as _G
 from .units import Quantity
 
 MU_AIR = 1.85e-5
 KB = 1.380649e-23
 EPS0 = 8.8541878128e-12
 ALPHA_SI = 2.6e-6           # 1/K, linear thermal expansion of silicon
+
+
+def lorentz_F(current_a: float, field_t: float, length_m: float) -> float:
+    """Lorentz force [N] on a conductor of length `length_m` carrying
+    `current_a` across a field of `field_t` tesla:  F = B*I*L.
+
+    No magnetic material anywhere -- which is exactly why a resonant
+    magnetometer can be built in a plain SOI process.
+    """
+    return field_t * current_a * length_m
 VOLTAGE = (2, 1, -3, -1)
 
 
@@ -213,7 +224,35 @@ def build_env(elab, res) -> Dict[str, object]:
         dt = dT.value if isinstance(dT, Quantity) else float(dT)
         return _q(chevron_stroke(L_m, ang, dt), (1, 0, 0, 0))
 
+    def _lorentz_span() -> float:
+        """Released span carrying current across the field, in metres."""
+        rel = [sh for sh in res.shapes
+               if sh.layer == "DEVICE" and sh.mech == "released"]
+        if not rel:
+            raise MetricError("lorentz_force() needs released geometry")
+        bb = _G.bbox_of(rel)
+        return max(bb[2] - bb[0], bb[3] - bb[1]) * 1e-6
+
+    def lorentz_force(I, B, *_a, **_k) -> Quantity:
+        i = I.value if isinstance(I, Quantity) else float(I)
+        b = B.value if isinstance(B, Quantity) else float(B)
+        return _q(lorentz_F(i, b, _lorentz_span()), (1, 1, -2, 0))
+
+    def lorentz_stroke(I, B, *_a, **_k) -> Quantity:
+        """Displacement at resonance: F*Q/k.
+
+        Driven at the beam's resonance, the Lorentz force is amplified by the
+        quality factor, which is the only reason an Earth-field signal is
+        detectable at all.
+        """
+        k = _model_q("k", "Lorentz stroke").value
+        f = lorentz_force(I, B).value
+        q = q_estimate().value
+        return _q(f * q / k, (1, 0, 0, 0))
+
     env.update({
+        "lorentz_force": lorentz_force,
+        "lorentz_stroke": lorentz_stroke,
         "pull_in": pull_in,
         "stroke_thermal": stroke_thermal,
         "f_res": f_res,

@@ -208,6 +208,12 @@ _BASE_UNITS: Dict[str, Tuple[float, Dim]] = {
     "us": (1e-6, TIME),
     # current
     "A": (1.0, CURRENT),
+    "mA": (1e-3, CURRENT),
+    "uA": (1e-6, CURRENT),
+    # magnetic flux density: kg / (s^2 * A)
+    "T": (1.0, (0, 1, -2, -1)),
+    "mT": (1e-3, (0, 1, -2, -1)),
+    "uT": (1e-6, (0, 1, -2, -1)),
     # frequency
     "Hz": (1.0, (0, 0, -1, 0)),
     "kHz": (1e3, (0, 0, -1, 0)),

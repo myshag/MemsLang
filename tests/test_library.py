@@ -1228,5 +1228,71 @@ class TestRingDisk(unittest.TestCase):
                                 "a release hole reaches past the disk rim")
 
 
+
+class TestLorentz(unittest.TestCase):
+    def test_force_is_linear_in_current_and_field(self):
+        from soidlc import metrics
+        f1 = metrics.lorentz_F(1e-3, 50e-6, 400e-6)
+        f2 = metrics.lorentz_F(2e-3, 50e-6, 400e-6)
+        f3 = metrics.lorentz_F(1e-3, 100e-6, 400e-6)
+        self.assertAlmostEqual(f2 / f1, 2.0, places=9)
+        self.assertAlmostEqual(f3 / f1, 2.0, places=9)
+
+    def test_tesla_and_milliamp_are_known_units(self):
+        """Without them `require lorentz_stroke(1 mA, 50 uT) >= ...` does not
+        even parse."""
+        from soidlc.units import parse_unit
+        self.assertEqual(parse_unit("T")[1], (0, 1, -2, -1))
+        self.assertEqual(parse_unit("uT")[0], 1e-6)
+        self.assertEqual(parse_unit("mA")[0], 1e-3)
+
+    def test_metric_is_callable_from_source(self):
+        src = TestImportResolution.PROC + """
+          import "flexures.soidl";
+          device d {
+            inst M = plate(400 um, 100 um) at (0, 0);
+            inst S = array(guided_beam(L = 250 um, w = 4 um), count = 4,
+                           place = corners(M));
+            inst SENSE = combdrive(N = 20, Lf = 40 um)
+                         attach (rotor -> M.top);
+            net SIG = SENSE.stator;
+            net GND = M | S.fixed;
+            isolate SIG from GND by trench;
+            require lorentz_stroke(1 mA, 50 uT) >= 0 um;
+            constraint anchored(S.fixed, SENSE.stator);
+          }
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        ok = [l for l in art.report if l.startswith("require") and ": ok" in l]
+        self.assertTrue(ok, art.report)
+
+    def test_stroke_is_amplified_by_q(self):
+        """At Earth-field level the static deflection is unmeasurable; the
+        whole device works because resonance multiplies it by Q."""
+        from soidlc import metrics
+        src = TestImportResolution.PROC + """
+          import "flexures.soidl";
+          device d {
+            inst M = plate(400 um, 100 um) at (0, 0);
+            inst S = array(guided_beam(L = 250 um, w = 4 um), count = 4,
+                           place = corners(M));
+            inst SENSE = combdrive(N = 20, Lf = 40 um)
+                         attach (rotor -> M.top);
+            net SIG = SENSE.stator;
+            net GND = M | S.fixed;
+            isolate SIG from GND by trench;
+            constraint anchored(S.fixed, SENSE.stator);
+          }
+        """
+        art = compile_source(src)
+        env = metrics.build_env(art.elab, art.result)
+        F = env["lorentz_force"](1e-3, 50e-6).value
+        x = env["lorentz_stroke"](1e-3, 50e-6).value
+        k = art.model["k"].value
+        self.assertGreater(x, F / k, "resonant stroke must exceed the static "
+                                     "deflection F/k")
+
+
 if __name__ == "__main__":
     unittest.main()
