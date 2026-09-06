@@ -49,6 +49,7 @@ class Transducer:
     N: int
     g_um: float
     ov_um: float
+    kind: str = "comb"      # "comb" (linear in x) or "plate" (1/(g-x))
     u: List[float] = field(default_factory=list)   # modal participation
 
 
@@ -100,7 +101,7 @@ def find_transducers(all_shapes: List[G.Shape], dev_ast, proc
                 dcdx=EPS0 * area_m2 / ((g_um * 1e-6) ** 2),
                 C0=EPS0 * area_m2 / (g_um * 1e-6),
                 axis=1, sign=1.0, bbox=G.bbox_of(rp),
-                N=n_pairs, g_um=g_um, ov_um=ov_um))
+                N=n_pairs, g_um=g_um, ov_um=ov_um, kind="plate"))
             continue
 
         rf = [s for s in ss if s.label == "rotor_finger"]
@@ -181,6 +182,15 @@ def build(elab, art, island_shapes: List[G.Shape], mesh: Mesh2D,
         tr.u = [tr.sign * (u or 0.0) for u in us]
         tlist.append(tr)
     if not tlist:
+        # Silence here reads as "nothing to report".  It is not: the device
+        # has a mode, it just has no electrostatic transducer to drive or
+        # sense it, so there is no electromechanical model to reduce.  A
+        # torsional mirror is the usual case -- its electrodes sit under the
+        # plate, which this in-plane process cannot express.
+        art.warnings.append(
+            "rom: no model built — no electrostatic transducer participates "
+            "in this island's modes, so there is nothing to reduce (a "
+            "torsional device driven by buried electrodes is the usual case)")
         return
 
     drive = next((t for t in tlist if t.net.upper().startswith("DRIVE")),
@@ -191,6 +201,18 @@ def build(elab, art, island_shapes: List[G.Shape], mesh: Mesh2D,
         art.warnings.append(
             "rom: drive transducer has ~zero participation in mode 1")
         return
+    if drive.kind == "plate":
+        # A BVD branch is linear; a gap-closing pair is not.  Its capacitance
+        # goes as 1/(g-x), the force rises as the gap closes, and past x = g/3
+        # it snaps shut.  An RF switch is driven deliberately past that point,
+        # so this model describes a regime the device is built to leave.
+        v_bvd, _src = _find_vdc(elab)
+        art.warnings.append(
+            f"rom: gap-closing transducer — this BVD model is a SMALL-SIGNAL "
+            f"linearisation at V_dc = {v_bvd:g} V and is valid only well "
+            f"below pull-in (x < g/3 = {drive.g_um / 3.0:.2f} um). A device "
+            f"operated past pull-in is not described by it")
+
     w = [2 * math.pi * f for f in freqs]
     m_eff = 1.0 / (u1 * u1)
     k_eff = w[0] ** 2 * m_eff
