@@ -136,17 +136,27 @@ component serpentine(L = 120 um, w = 3 um, n_turns = 4, pitch = 12 um) {
   check L > 60 um;
 }
 
-// Crab-leg flexure: a thigh of length Lx that bends, plus a shin of length Ly
-// whose compliance softens the thigh's end restraint.  Lengthening the shin
-// makes the suspension softer without lengthening the thigh, which is how a
-// crab-leg fits a soft spring into a square footprint.
+// Crab-leg flexure: a thigh along x and a shin along y, anchored at the shin.
+// Compact -- it folds a soft suspension into a square footprint -- but it is
+// a two-member FRAME, and this component deliberately carries NO stiffness
+// formula.
 //
-//   k_x = E*t*w^3 / (Lx^3 * (1 + 3*Ly/Lx))
+// Why: for motion along x the thigh is loaded AXIALLY, so it contributes
+// almost no bending compliance; the compliance comes from the shin bending
+// plus the joint rotation the guided shuttle end resists.  Solving that
+// properly is a frame analysis, not a substitution into the cantilever
+// formula.  The textbook-looking expression
+//     k_x = E*t*w^3 / (Lx^3 * (1 + 3*Ly/Lx))
+// was measured against plane-stress FEM at Lx=150, Ly=60, w=4 and came out
+// 38.7% low (67.4 kHz measured against 48.6 kHz predicted).  Shipping it
+// would put a confident wrong number into `solve` and `require`.
+//
+// So: use crab_leg for its geometry and take its stiffness from --fem.  A
+// device suspended only on crab legs contributes no k_x, so the lumped model
+// reports no f0 and f_res() raises rather than inventing one -- which is the
+// intended behaviour, not an oversight.
 component crab_leg(Lx = 150 um, Ly = 60 um, w = 4 um) {
   mech port fixed, shuttle;
-
-  derive k.x = (process.DEVICE.E * process.DEVICE.thickness * w^3)
-               / (Lx^3 * (1 + 3*Ly/Lx));
 
   geometry {
     beam(Lx, w, dir = x) at (2 um - Lx/2, 0);              // thigh

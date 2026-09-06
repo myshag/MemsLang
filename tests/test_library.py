@@ -481,10 +481,56 @@ class TestCompliantFlexures(unittest.TestCase):
         self.assertLess(k6, k2)
         self.assertAlmostEqual(k2 / k6, 3.0, delta=0.2)
 
-    def test_crab_leg_shin_softens_it(self):
-        short = self._k("crab_leg(Lx = 150 um, Ly = 20 um, w = 4 um)")
-        long = self._k("crab_leg(Lx = 150 um, Ly = 120 um, w = 4 um)")
-        self.assertLess(long, short)
+    def test_crab_leg_reports_no_stiffness_rather_than_a_wrong_one(self):
+        """crab_leg ships without a closed-form k on purpose.
+
+        The cantilever-style expression for it measured 38.7% low against
+        plane-stress FEM (67.4 kHz vs 48.6 kHz predicted), because for motion
+        along x the thigh is loaded axially and contributes almost no bending
+        compliance.  A device on crab legs alone therefore has no lumped f0 --
+        no number beats a confidently wrong one in `solve` and `require`.
+        """
+        src = TestImportResolution.PROC + """
+          import "flexures.soidl";
+          device d {
+            inst M = plate(300 um, 300 um) at (0, 0);
+            inst S = array(crab_leg(Lx = 150 um, Ly = 60 um, w = 4 um),
+                           count = 4, place = corners(M));
+            net GND = M | S.fixed;
+            constraint anchored(S.fixed);
+          }
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        self.assertIn("m", art.model)          # mass is measurable
+        self.assertNotIn("k", art.model)       # stiffness is not claimed
+        self.assertNotIn("f0", art.model)
+
+    def test_crab_leg_is_a_real_spring_geometrically(self):
+        """No formula, but the silicon must still be a suspension: a single
+        chain mass -> thigh -> shin -> anchor, with the anchor off the mass."""
+        from soidlc import connectivity
+        src = TestImportResolution.PROC + """
+          import "flexures.soidl";
+          device d {
+            inst M = plate(300 um, 300 um) at (0, 0);
+            inst S = array(crab_leg(Lx = 150 um, Ly = 60 um, w = 4 um),
+                           count = 4, place = corners(M));
+            net GND = M | S.fixed;
+            constraint anchored(S.fixed);
+          }
+        """
+        art = compile_source(src)
+        dev = [s for s in art.result.shapes if s.layer == "DEVICE"]
+        plate = [s for s in dev if s.label == "plate"][0]
+        for a in [s for s in dev if s.label == "anchor"]:
+            self.assertFalse(connectivity.touches(a.polygon, plate.polygon))
+            gripped = [b for b in dev if b.label == "beam"
+                       and connectivity.touches(a.polygon, b.polygon)]
+            self.assertEqual(len(gripped), 1)
+            self.assertFalse(
+                connectivity.touches(gripped[0].polygon, plate.polygon),
+                "the anchored shin also reaches the mass: spring shorted")
 
     def test_compliant_flexures_do_not_short_their_springs(self):
         """The folded-flexure lesson, applied to the other two: an anchor that
