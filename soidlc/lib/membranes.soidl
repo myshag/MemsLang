@@ -1,0 +1,36 @@
+// SOIDL standard library: membranes.
+// Imported as:  import "membranes.soidl";
+
+// A pressure-sensing diaphragm: an UNPERFORATED plate whose substrate is
+// removed from behind by the backside etch.
+//
+// Every other released structure in this library floats because the
+// sacrificial oxide under it was dissolved through release holes.  A membrane
+// cannot have those holes -- it has to hold a pressure difference -- so it is
+// freed from below instead.  That is the whole reason the process declares
+// `mask TRENCH -> etch(HANDLE, through, backside)`.
+//
+// `margin` is the width of the clamped rim: the trench is inset by that much
+// on every side, and the rim is what the diaphragm bends against.  The rim
+// straddles the trench edge, so it keeps its buried oxide and stays anchored
+// -- build3d drops the oxide only under shapes wholly inside a trench.
+component membrane(W = 400 um, H = 400 um, margin = 40 um) {
+  mech port rim, centre;
+
+  geometry {
+    plate(W, H, holes = none) at (0, 0);
+    // the clamped rim: anchored silicon on the four edges, outside the
+    // trench footprint, so it keeps its buried oxide and holds the
+    // diaphragm.  Without it the membrane is a released island with nothing
+    // holding it -- which the connectivity check reports, correctly.
+    anchor(W, margin) at (0, H/2 - margin/2);
+    anchor(W, margin) at (0, margin/2 - H/2);
+    anchor(margin, H - 2*margin) at (margin/2 - W/2, 0);
+    anchor(margin, H - 2*margin) at (W/2 - margin/2, 0);
+    trench(W - 2*margin, H - 2*margin) at (0, 0);
+  }
+
+  check margin >= 10 um;
+  check W > 4*margin;
+  check H > 4*margin;
+}

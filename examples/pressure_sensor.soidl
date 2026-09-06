@@ -1,0 +1,44 @@
+// Membrane pressure sensor.
+//
+// The first device in this repo to use the backside etch that every process
+// here has always declared: `mask TRENCH -> etch(HANDLE, through, backside)`.
+// Pressure deflects the unperforated diaphragm; the strain is largest at the
+// clamped rim, so that is where sense elements belong.
+//
+// Every other released structure in this project floats because the
+// sacrificial oxide beneath it was dissolved through release holes.  A
+// diaphragm cannot have those holes -- it has to hold a pressure difference --
+// so it is freed from below instead.  That is what the cavity is for, and why
+// this device was not expressible until the substrate could have a hole in it.
+// Compile:  python -m soidlc.cli examples/pressure_sensor.soidl
+
+import "membranes.soidl";
+
+process soi25 {
+  stack {
+    layer METAL  { thickness = 1 um;   material = Au }
+    layer DEVICE { thickness = 25 um;  material = Si;
+                   E = 169 GPa; rho = 2330 kg/m^3; nu = 0.22 }
+    layer BOX    { thickness = 2 um;   material = SiO2 }
+    layer HANDLE { thickness = 400 um; material = Si }
+  }
+  masks {
+    mask SOID     -> etch(DEVICE, through)
+    mask TRENCH   -> etch(HANDLE, through, backside)
+    mask PADMETAL -> deposit(METAL)
+  }
+  rules {
+    release { hole_size = 6 um; hole_pitch = 30 um; max_solid_span = 40 um }
+  }
+}
+
+device pressure_sensor {
+  inst DIA = membrane(W = 600 um, H = 600 um, margin = 60 um) at (0, 0);
+  // sense traces routed off the rim, where the bending strain peaks
+  inst RT1 = route(180 um, 12 um, dir = x) at (0 - 400 um, 0 - 270 um);
+  inst RT2 = route(180 um, 12 um, dir = x) at (400 um, 0 - 270 um);
+  inst P1  = pad(100 um, 100 um) at (0 - 540 um, 0 - 270 um);
+  inst P2  = pad(100 um, 100 um) at (540 um, 0 - 270 um);
+
+  net GND = DIA;
+}

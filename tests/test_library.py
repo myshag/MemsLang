@@ -1103,5 +1103,73 @@ class TestTorsionBarPlacement(unittest.TestCase):
                                msg="one torsion bar is buried in the plate")
 
 
+
+class TestMembrane(unittest.TestCase):
+    def test_membrane_is_unperforated_and_backed_by_a_trench(self):
+        src = TestImportResolution.PROC + """
+          import "membranes.soidl";
+          device d {
+            inst MB = membrane(W = 400 um, H = 400 um, margin = 40 um)
+                      at (0, 0);
+            net GND = MB;
+          }
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        dev = [s for s in art.result.shapes if s.layer == "DEVICE"]
+        self.assertTrue(dev)
+        self.assertEqual(sum(len(s.polygon.holes) for s in dev), 0,
+                         "a diaphragm must not be perforated: it has to hold "
+                         "a pressure difference")
+        tr = [s for s in art.result.shapes if s.layer == "TRENCH"]
+        self.assertEqual(len(tr), 1)
+        x0, y0, x1, y1 = tr[0].polygon.bbox()
+        self.assertAlmostEqual(x1 - x0, 320.0, delta=1.0)
+
+    def test_membrane_rim_is_anchored(self):
+        """Without a clamped rim the diaphragm is a released island with
+        nothing holding it -- which the connectivity check reports, and
+        should."""
+        src = TestImportResolution.PROC + """
+          import "membranes.soidl";
+          device d {
+            inst MB = membrane(W = 400 um, H = 400 um, margin = 40 um)
+                      at (0, 0);
+            net GND = MB;
+          }
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        anchored = [s for s in art.result.shapes
+                    if s.layer == "DEVICE" and s.mech == "anchored"]
+        self.assertEqual(len(anchored), 4, "the rim is four clamped edges")
+
+    def test_pressure_sensor_really_cuts_the_substrate(self):
+        """The visual proof that the backside etch landed: before it, the
+        handle was an unbroken slab under everything."""
+        with open(os.path.join(EX, "pressure_sensor.soidl")) as f:
+            art = compile_source(f.read(), base_dir=EX)
+        self.assertEqual(art.errors, [], art.errors)
+        zs = sorted({round(v[2], 1) for v in art.mesh.vertices})
+        z_lo, z_hi = zs[0], zs[1]
+        corners = [v for v in art.mesh.vertices
+                   if round(v[2], 1) in (z_lo, z_hi)
+                   and abs(abs(v[0]) - 240.0) < 0.5
+                   and abs(abs(v[1]) - 240.0) < 0.5]
+        self.assertTrue(corners,
+                        "the handle slab has no vertices at the cavity "
+                        "corners: the trench was a no-op")
+
+    def test_trenched_pressure_sensor_is_watertight(self):
+        from collections import Counter as _C
+        with open(os.path.join(EX, "pressure_sensor.soidl")) as f:
+            art = compile_source(f.read(), base_dir=EX)
+        e = _C()
+        for (a, b, c) in art.mesh.triangles:
+            for x in ((a, b), (b, c), (c, a)):
+                e[frozenset(x)] += 1
+        self.assertEqual(sum(1 for v in e.values() if v != 2), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
