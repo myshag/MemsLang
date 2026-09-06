@@ -198,6 +198,10 @@ def prim_parallel_plate(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
     pull-in is the whole reason RF switches are built this way -- and the
     reason a gap-closing sensor must stay below it.  metrics.pull_in()
     computes the collapse voltage.
+
+    Laid out like a comb -- all rotor plates on one backbone, all stators on
+    the other -- so `attach (rotor -> M.top)` has a single rotor face to abut.
+    Interleaving them instead leaves the rotor a floating island.
     """
     W = _um(_arg(args, kwargs, 0, "W", Quantity(100e-6, (1, 0, 0, 0))))
     H = _um(_arg(args, kwargs, 1, "H", Quantity(40e-6, (1, 0, 0, 0))))
@@ -205,17 +209,29 @@ def prim_parallel_plate(args, kwargs, ctx: PrimitiveCtx) -> List[G.Shape]:
     n = int(round(_num(_arg(args, kwargs, 3, "n", 1))))
     if g <= 0:
         raise ValueError("parallel_plate() needs a positive gap")
+    if n < 1:
+        raise ValueError("parallel_plate() needs at least one pair")
 
-    shapes: List[G.Shape] = []
-    pitch = 2 * H + 2 * g
-    y = -(n - 1) * pitch / 2.0
-    for _ in range(n):
-        shapes.append(G.Shape(ctx.device_layer, G.rect(W, H, 0.0, y),
+    bar = 8.0
+    pitch_x = W + 8.0
+    total = n * pitch_x
+    y_r = -(g / 2.0 + H / 2.0)          # rotor plates below the gap
+    y_s = +(g / 2.0 + H / 2.0)          # stator plates above it
+
+    shapes: List[G.Shape] = [
+        G.Shape(ctx.device_layer,
+                G.rect(total, bar, 0.0, y_r - H / 2.0 - bar / 2.0),
+                "plate_rotor_bar", mech="released"),
+        G.Shape(ctx.device_layer,
+                G.rect(total, bar, 0.0, y_s + H / 2.0 + bar / 2.0),
+                "plate_stator_bar", mech="anchored"),
+    ]
+    for i in range(n):
+        x = -total / 2.0 + pitch_x / 2.0 + i * pitch_x
+        shapes.append(G.Shape(ctx.device_layer, G.rect(W, H, x, y_r),
                               "rotor_plate", mech="released"))
-        shapes.append(G.Shape(ctx.device_layer,
-                              G.rect(W, H, 0.0, y + H + g),
+        shapes.append(G.Shape(ctx.device_layer, G.rect(W, H, x, y_s),
                               "stator_plate", mech="anchored"))
-        y += pitch
     return shapes
 
 

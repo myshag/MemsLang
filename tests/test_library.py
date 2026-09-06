@@ -643,8 +643,10 @@ class TestParallelPlate(unittest.TestCase):
         shapes = P.PRIMITIVES["parallel_plate"](
             [], {"W": _um(100), "H": _um(40), "g": _um(3), "n": 2},
             P.PrimitiveCtx())
-        self.assertEqual(sorted({s.label for s in shapes}),
-                         ["rotor_plate", "stator_plate"])
+        self.assertEqual(
+            sorted({s.label for s in shapes}),
+            ["plate_rotor_bar", "plate_stator_bar", "rotor_plate",
+             "stator_plate"])
         mechs = {s.label: s.mech for s in shapes}
         self.assertEqual(mechs["rotor_plate"], "released")
         self.assertEqual(mechs["stator_plate"], "anchored")
@@ -750,6 +752,87 @@ class TestThermalActuators(unittest.TestCase):
         # the thin arm carries the higher resistance per length, so it runs
         # hotter and expands more -- the asymmetry IS the actuator
         self.assertLess(hot.polygon.area(), cold.polygon.area())
+
+
+
+class TestActuatorMetrics(unittest.TestCase):
+    PROC = TestImportResolution.PROC
+
+    def _pull_in(self, gap_um):
+        from soidlc import metrics
+        src = self.PROC + f"""
+          import "flexures.soidl";
+          device d {{
+            inst M = plate(200 um, 100 um) at (0, 0);
+            inst S = array(guided_beam(L = 250 um, w = 4 um), count = 4,
+                           place = corners(M));
+            inst PP = parallel_plate(W = 60 um, H = 30 um,
+                                     g = {gap_um} um, n = 2)
+                      attach (rotor -> M.top);
+            net DRIVE = PP.stator;
+            net GND   = M | S.fixed;
+            isolate DRIVE from GND by trench;
+            constraint anchored(S.fixed, PP.stator);
+          }}
+        """
+        art = compile_source(src)
+        self.assertEqual(art.errors, [], art.errors)
+        env = metrics.build_env(art.elab, art.result)
+        return env["pull_in"]().value
+
+    def test_pull_in_is_computed_from_the_geometry(self):
+        v = self._pull_in(3.0)
+        self.assertGreater(v, 0.0)
+        self.assertLess(v, 1000.0, "implausible collapse voltage")
+
+    def test_pull_in_scales_with_gap_to_the_three_halves(self):
+        """V_pi ~ g^(3/2). Two devices differing only in g, so the ratio
+        isolates the gap dependence -- and it goes through the compiler and
+        the transducer extractor, not a formula retyped in the test."""
+        self.assertAlmostEqual(self._pull_in(6.0) / self._pull_in(3.0),
+                               2 ** 1.5, delta=0.05)
+
+    def test_pull_in_refuses_a_device_with_no_gap_closing_pair(self):
+        from soidlc import metrics
+        src = self.PROC + """
+          import "flexures.soidl";
+          device d {
+            inst M = plate(200 um, 100 um) at (0, 0);
+            inst S = array(guided_beam(L = 250 um, w = 4 um), count = 4,
+                           place = corners(M));
+            net GND = M | S.fixed;
+            constraint anchored(S.fixed);
+          }
+        """
+        art = compile_source(src)
+        env = metrics.build_env(art.elab, art.result)
+        with self.assertRaises(metrics.MetricError):
+            env["pull_in"]()
+
+    def test_thermal_stroke_grows_with_temperature(self):
+        from soidlc import metrics
+        d1 = metrics.chevron_stroke(200e-6, 6.0, 50.0)
+        d2 = metrics.chevron_stroke(200e-6, 6.0, 200.0)
+        self.assertGreater(d2, d1)
+        self.assertGreater(d1, 0.0)
+
+    def test_shallower_chevron_gives_more_stroke(self):
+        """A shallower V converts the same expansion into more motion -- the
+        force-for-stroke trade that sets a chevron's angle."""
+        from soidlc import metrics
+        shallow = metrics.chevron_stroke(200e-6, 3.0, 100.0)
+        steep = metrics.chevron_stroke(200e-6, 12.0, 100.0)
+        self.assertGreater(shallow, steep)
+
+    def test_exact_stroke_matches_small_angle_where_that_is_valid(self):
+        """Cross-check the exact form against the textbook approximation in
+        the regime where the approximation holds."""
+        import math as _m
+        from soidlc import metrics
+        L, ang, dT = 200e-6, 6.0, 100.0
+        exact = metrics.chevron_stroke(L, ang, dT)
+        approx = L * metrics.ALPHA_SI * dT / _m.sin(_m.radians(ang))
+        self.assertAlmostEqual(exact / approx, 1.0, delta=0.05)
 
 
 if __name__ == "__main__":
