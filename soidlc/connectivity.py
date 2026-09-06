@@ -40,6 +40,18 @@ def _point_in(ring, x: float, y: float) -> bool:
     return inside
 
 
+def _point_in_poly(poly: "G.Polygon", x: float, y: float) -> bool:
+    """Inside the exterior AND outside every hole.
+
+    _point_in alone answers a different question -- "inside the outer ring" --
+    which reports a shape sitting in a release hole, or in a ring's bore, as
+    being inside the silicon around it.
+    """
+    if not _point_in(poly.exterior, x, y):
+        return False
+    return not any(_point_in(h, x, y) for h in poly.holes)
+
+
 def _segs(ring):
     n = len(ring)
     for i in range(n):
@@ -76,12 +88,15 @@ def touches(a: G.Polygon, b: G.Polygon, eps: float = EPS) -> bool:
         return False
     if ay0 > by1 + eps or by0 > ay1 + eps:
         return False
-    # for axis-aligned rectangles the bbox test is exact
-    if _is_axis_rect(a.exterior) and _is_axis_rect(b.exterior):
+    # For axis-aligned rectangles the bbox test is exact -- but only while
+    # neither has holes.  A shape sitting inside a release hole overlaps the
+    # bbox and touches nothing.
+    if (not a.holes and not b.holes
+            and _is_axis_rect(a.exterior) and _is_axis_rect(b.exterior)):
         return True
-    if any(_point_in(b.exterior, x, y) for x, y in a.exterior):
+    if any(_point_in_poly(b, x, y) for x, y in a.exterior):
         return True
-    if any(_point_in(a.exterior, x, y) for x, y in b.exterior):
+    if any(_point_in_poly(a, x, y) for x, y in b.exterior):
         return True
     for s1 in _segs(a.exterior):
         for s2 in _segs(b.exterior):

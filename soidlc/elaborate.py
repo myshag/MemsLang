@@ -396,7 +396,7 @@ class Elaborator:
 
         bbox = G.bbox_of(all_shapes)
         model = self._extract_device_model(insts)
-        self._check_connectivity(dev, all_shapes)
+        self._check_connectivity(dev, all_shapes, model)
         return InstanceResult(all_shapes, bbox, {}, model)
 
     def _plan_solves(self, dev: A.Device, env) -> Dict[str, Quantity]:
@@ -717,7 +717,9 @@ class Elaborator:
         return model
 
     # ---- connectivity extraction (geometry -> netlist, LVS-style) ------
-    def _check_connectivity(self, dev: A.Device, all_shapes: List[G.Shape]):
+    def _check_connectivity(self, dev: A.Device,
+                            all_shapes: List[G.Shape],
+                            model: Optional[Dict[str, object]] = None):
         if self._quiet:
             return          # skipped during design-closure iterations
         devlay = self.process.ctx.device_layer
@@ -743,6 +745,8 @@ class Elaborator:
                     f"island #{c} ({', '.join(owners) or 'unnamed'}) has no "
                     f"anchor — released geometry would float away "
                     f"(bbox [{x0:.0f},{y0:.0f}]..[{x1:.0f},{y1:.0f}] um)")
+
+        self._check_suspension_not_bypassed(shapes, model)
 
         anchored_islands = {c for c, ss in islands.items()
                             if any(s.mech == "anchored" for s in ss)}
@@ -806,6 +810,50 @@ class Elaborator:
                     f"#{min(ca & cb)} (trench does not separate them)")
             else:
                 self.report.append(f"isolate {da} from {db}: ok")
+
+    # Minimum released area, in um^2, for a shape to count as a proof mass
+    # rather than a flexure member.  140x140 um: smaller than every proof mass
+    # in examples/, larger than every beam and truss.
+    _PROOF_MASS_AREA = 20000.0
+
+    def _check_suspension_not_bypassed(self, shapes, model) -> None:
+        """Warn when a declared suspension is short-circuited by the geometry.
+
+        An anchor a few um out of place welds the proof mass straight to the
+        substrate.  Nothing else here objects: it stays one legal island with
+        an anchor and no shorts, and `derive k.x` is arithmetic that never
+        sees the silicon, so it keeps reporting a compliant spring.  On the
+        real case that produced 24.1 kHz where FEM measured 220.1 kHz.
+
+        The contradiction is what is checkable: the device claims a stiffness
+        AND its proof mass touches an anchor directly.  A warning rather than
+        an error, because the same geometry with no such claim is legitimate
+        -- a clamped membrane rim is exactly that.
+        """
+        if not model:
+            return
+        if not any(isinstance(model.get(k), Quantity)
+                   for k in ("k", "k_theta")):
+            return                      # no suspension declared, nothing to bypass
+        anchored = [s for s in shapes if s.mech == "anchored"]
+        masses = [s for s in shapes if s.mech == "released"
+                  and s.polygon.area() > self._PROOF_MASS_AREA]
+        seen = set()
+        for m in masses:
+            for a in anchored:
+                if not connectivity.touches(a.polygon, m.polygon):
+                    continue
+                key = (m.owner, a.owner)
+                if key in seen:
+                    continue
+                seen.add(key)
+                x0, y0, x1, y1 = a.polygon.bbox()
+                self.warnings.append(
+                    f"suspension bypassed: released {m.owner or m.label} "
+                    f"({m.polygon.area():.0f} um^2) is welded directly to "
+                    f"anchored {a.owner or a.label} at "
+                    f"[{x0:.0f},{y0:.0f}]..[{x1:.0f},{y1:.0f}] um — the "
+                    f"declared stiffness does not describe this structure")
 
     def _shapes_for_ref(self, shapes: List[G.Shape], iname: str,
                         port: Optional[str]) -> List[G.Shape]:

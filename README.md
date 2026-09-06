@@ -84,7 +84,18 @@ The pipeline mirrors the `soidlc` stages from the spec:
    - two different `net`s on one island → **short, error**;
    - `isolate A from B by trench` sharing an island → **error**;
    - an island with no anchored geometry → **error** (a fully released
-     island has nothing holding it and would detach during release).
+     island has nothing holding it and would detach during release);
+   - a device that declares a stiffness while its proof mass touches an
+     anchor directly → **warning: suspension bypassed**. An anchor a few µm
+     out of place welds the mass to the substrate, and nothing else objects:
+     it is one legal island with an anchor and no shorts, and `derive k.x` is
+     arithmetic that never sees the silicon. On a real case that reported
+     24.1 kHz where FEM measured 220.1 kHz. A warning rather than an error,
+     because the same geometry without the claim is legitimate — a clamped
+     membrane rim is exactly that.
+
+   Holes do not conduct: a shape sitting inside a release hole or a ring's
+   bore is a separate island, not fused with the shape whose hole it occupies.
    Violations are printed as `soidlc: ERROR:` and the exit code is 2
    (artifacts are still written to aid debugging). The check is real: while
    wiring it up it caught two genuine bugs in this repo — comb rotor finger
