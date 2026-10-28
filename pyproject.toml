@@ -30,4 +30,4 @@ packages = ["soidlc", "soidlc.fem", "webapp", "webapp.backend"]
 # default -- without this the SOIDL standard library works from a checkout and
 # silently vanishes on `pip install`.
 [tool.setuptools.package-data]
-soidlc = ["lib/*.soidl"]
+soidlc = ["lib/*.soidl", "reactors/*.ferma"]

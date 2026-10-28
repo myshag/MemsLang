@@ -1,0 +1,143 @@
+{
+ "ferma_icp": 1,
+ "model": "global",
+ "gas": {
+  "mechanism": "c4f8",
+  "pressure": 3.999671053,
+  "temperature": 315,
+  "feed": [
+   {
+    "species": "C4F8",
+    "sccm": 100
+   }
+  ]
+ },
+ "coil": {
+  "power": 600,
+  "frequency": 13560000,
+  "resistance": 0.5,
+  "current": 24.51133484,
+  "voltage": 1991.230615
+ },
+ "converged": true,
+ "absorbed_power": 449.7987929,
+ "ne_max": 2.368579293e+17,
+ "Te_mean": 2.638801047,
+ "species": [
+  {
+   "name": "C4F8",
+   "density": 1.962224155e+19,
+   "flux": 8.957476069e+20
+  },
+  {
+   "name": "C3F6",
+   "density": 6.486614769e+18,
+   "flux": 3.419200071e+20
+  },
+  {
+   "name": "C3F5",
+   "density": 2.016014891e+17,
+   "flux": 1.137109797e+19
+  },
+  {
+   "name": "C2F4",
+   "density": 5.579913675e+19,
+   "flux": 3.602297005e+21
+  },
+  {
+   "name": "C2F3",
+   "density": 2.190117805e+17,
+   "flux": 1.570957778e+19
+  },
+  {
+   "name": "CF3",
+   "density": 2.146823827e+18,
+   "flux": 1.668547451e+20
+  },
+  {
+   "name": "CF2",
+   "density": 3.734246335e+20,
+   "flux": 3.409337521e+22
+  },
+  {
+   "name": "CF",
+   "density": 1.590522381e+20,
+   "flux": 1.844073977e+22
+  },
+  {
+   "name": "C",
+   "density": 4.083894677e+19,
+   "flux": 7.607945362e+21
+  },
+  {
+   "name": "F",
+   "density": 1.342858122e+20,
+   "flux": 1.98910919e+22
+  },
+  {
+   "name": "F2",
+   "density": 1.275886283e+20,
+   "flux": 1.336366143e+22
+  },
+  {
+   "name": "C3F5+",
+   "density": 7927448052000000.0,
+   "flux": 6.270726895e+17
+  },
+  {
+   "name": "C2F4+",
+   "density": 3.769480968e+16,
+   "flux": 3.347829447e+18
+  },
+  {
+   "name": "C2F3+",
+   "density": 3603234672000000.0,
+   "flux": 3.503796735e+17
+  },
+  {
+   "name": "CF3+",
+   "density": 3.293367061e+17,
+   "flux": 3.432077988e+19
+  },
+  {
+   "name": "CF2+",
+   "density": 4.175610086e+16,
+   "flux": 5.002978905e+18
+  },
+  {
+   "name": "CF+",
+   "density": 3.209842786e+17,
+   "flux": 4.738038833e+19
+  },
+  {
+   "name": "C+",
+   "density": 5821122884000000.0,
+   "flux": 1.308446207e+18
+  },
+  {
+   "name": "F+",
+   "density": 287920726500000.0,
+   "flux": 5.275170877e+16
+  },
+  {
+   "name": "F2+",
+   "density": 8449397528000000.0,
+   "flux": 1.141056746e+18
+  },
+  {
+   "name": "F-",
+   "density": 5.190030899e+17,
+   "flux": 0
+  },
+  {
+   "name": "F(s)",
+   "coverage": 0.3509119479
+  }
+ ],
+ "source": "soidlc/reactors/bosch_passivation.ferma (the reference recipe)",
+ "wafer": {
+  "diameter": 0.15,
+  "material": "",
+  "reacts": false
+ }
+}
