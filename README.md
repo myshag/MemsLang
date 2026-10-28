@@ -369,6 +369,22 @@ practical):
   recipe parameters (SF₆/C₄F₈ flows, coil/bias powers, pressure, step times,
   cycle count) onto the effective etch knobs, with calibratable coefficients and
   process-window warnings (grass risk, mask-selectivity loss).
+- **Plasma physics of the recipe** (`plasma.py`) — the same map driven by the
+  discharges instead of power laws: `BoschProcess(plasma=FermaPlasma())` runs
+  each step of the cycle as a steady discharge of a planar-coil ICP reactor in
+  [Ferma](https://github.com/AIOS2/ferma)'s ICP solver (`ferma build -p ...`,
+  `ferma mesh`, `ferma_icp`; the reactor models are `soidlc/reactors/*.ferma`):
+  the etch step (SF₆, RF bias on the wafer) gives the silicon etch rate, its
+  thermal/ion-driven split, the F flux and the ions' energy at the wafer; the
+  passivation step (c-C₄F₈) the CF/CF₂/CF₃ flux that deposits the film. The
+  vertical rate follows the etch rate, the isotropic/anisotropic balance the
+  thermal over the ion-driven share, the passivation the film flux per step
+  against the F flux per step, selectivity and footing the ions' energy -- each
+  relative to the reference recipe's discharges, so the calibration constants
+  keep their meaning. The binaries come from `FERMA` and `FERMA_ICP` (or
+  `PATH`); a run takes half a minute (passivation) to three minutes (etch: the
+  sheath's particle model), so results are cached per recipe (in memory, and
+  on disk with `FermaPlasma(cache_dir=...)`).
 - **Anisotropic wet etch** (`koh.py`) — KOH/TMAH bulk micromachining with an
   orientation-dependent rate: {111} planes ~100× slower meet a (100) surface at
   54.74°, so a mask opening self-organises into the classic facetted pit /
@@ -562,6 +578,8 @@ soidlc/
                  (the three above compile together into etch_core.so)
   etch.py        Bosch DRIE feature-scale simulation
   recipe_physics.py recipe params -> effective etch knobs
+  plasma.py      the recipe's etch and passivation plasmas from Ferma's ICP solver
+  reactors/      the Bosch steps' ICP reactor models (Ferma)
   koh.py         anisotropic (KOH/TMAH) wet etch, 2D + 3D
   crystal_rates.py calibrated R(n) diagram (measured planes -> lookup table)
   corner.py      convex-corner undercut + compensation structures

@@ -1,0 +1,158 @@
+{
+ "ferma_icp": 1,
+ "model": "global",
+ "gas": {
+  "mechanism": "sf6",
+  "pressure": 3.999671053,
+  "temperature": 315,
+  "feed": [
+   {
+    "species": "SF6",
+    "sccm": 130
+   }
+  ]
+ },
+ "coil": {
+  "power": 600,
+  "frequency": 13560000,
+  "resistance": 0.5,
+  "current": 29.14474388,
+  "voltage": 2383.023639
+ },
+ "converged": true,
+ "absorbed_power": 387.6459769,
+ "ne_max": 7.603065567e+16,
+ "Te_mean": 3.375625094,
+ "species": [
+  {
+   "name": "SF6",
+   "density": 1.633526876e+20,
+   "flux": 8.726918346e+21
+  },
+  {
+   "name": "SF5",
+   "density": 8.945060606e+19,
+   "flux": 5.123637411e+21
+  },
+  {
+   "name": "SF4",
+   "density": 9.685810954e+19,
+   "flux": 6.015919533e+21
+  },
+  {
+   "name": "SF3",
+   "density": 1.15364476e+20,
+   "flux": 7.892740376e+21
+  },
+  {
+   "name": "F2",
+   "density": 1.880487545e+19,
+   "flux": 1.969626855e+21
+  },
+  {
+   "name": "F",
+   "density": 1.247367584e+20,
+   "flux": 1.847663788e+22
+  },
+  {
+   "name": "SF5+",
+   "density": 2.127235054e+17,
+   "flux": 1.46084987e+19
+  },
+  {
+   "name": "SF4+",
+   "density": 1.012365928e+17,
+   "flux": 7.402063318e+18
+  },
+  {
+   "name": "SF3+",
+   "density": 1.905968425e+17,
+   "flux": 1.501669235e+19
+  },
+  {
+   "name": "F2+",
+   "density": 2152609340000000.0,
+   "flux": 2.354464284e+17
+  },
+  {
+   "name": "SF6-",
+   "density": 2.150140299e+17,
+   "flux": 0
+  },
+  {
+   "name": "F-",
+   "density": 2.156648644e+17,
+   "flux": 0
+  },
+  {
+   "name": "SiF4",
+   "density": 7.42552581e+19,
+   "flux": 4.699290193e+21
+  },
+  {
+   "name": "SiF2",
+   "density": 2.368436559e+20,
+   "flux": 1.881074033e+22
+  },
+  {
+   "name": "F(s)",
+   "coverage": 0.01457824148
+  },
+  {
+   "name": "SF3(s)",
+   "coverage": 0.0371665556
+  },
+  {
+   "name": "SF4(s)",
+   "coverage": 0.1389962246
+  },
+  {
+   "name": "SF5(s)",
+   "coverage": 0.6446509464
+  }
+ ],
+ "source": "soidlc/reactors/bosch_etch.ferma (the reference recipe)",
+ "wafer": {
+  "diameter": 0.15,
+  "material": "Si",
+  "reacts": true,
+  "etch_rate": 3.107846613e-08,
+  "ion_share": 0.7165886276
+ },
+ "bias": {
+  "frequency": 13560000,
+  "power": 15.00523664,
+  "V1": 113.3451048,
+  "Vdc": 121.7764262,
+  "ions": [
+   {
+    "name": "SF5+",
+    "mean": 123.9565133,
+    "min": 108.1661615,
+    "max": 139.0304827,
+    "yield": 50.86990806
+   },
+   {
+    "name": "SF4+",
+    "mean": 124.042843,
+    "min": 106.8857446,
+    "max": 140.357587,
+    "yield": 50.88403292
+   },
+   {
+    "name": "SF3+",
+    "mean": 124.1603382,
+    "min": 105.2164435,
+    "max": 142.0929463,
+    "yield": 50.91119668
+   },
+   {
+    "name": "F2+",
+    "mean": 125.2488242,
+    "min": 95.58436002,
+    "max": 152.2577182,
+    "yield": 51.10437513
+   }
+  ]
+ }
+}
