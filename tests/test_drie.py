@@ -56,7 +56,7 @@ def _surface_at(r, x):
 
 _MASK = 0.1    # um: thin enough not to shadow a wide opening
 # s: the film's growth fitted to Zhang et al.'s depth (TestZhang2023)
-_BREAKTHROUGH = 7.25
+_BREAKTHROUGH = 7.0
 
 
 def _etch(fluxes, openings=((5.0, 45.0),), width=50.0, depth=4.0, dx=0.05,
@@ -93,11 +93,11 @@ class TestFilm(unittest.TestCase):
                                delta=0.03)
 
     def test_no_etch_before_breakthrough(self):
-        # with the plasma's radicals and their measured sticking alone the
-        # passivation step leaves ~1.6 um, which takes the ions minutes
-        # against the 8 s etch step, and nothing etches
+        # an etch step half as long as the ions take to wear through the
+        # passivation step's film (with the plasma's radicals and their
+        # measured sticking, ~120 nm in 12 s): nothing etches
         f = _reference(cycles=1)
-        self.assertGreater(f.breakthrough(), 2 * f.t_etch)
+        f = replace(f, t_etch=0.5 * f.breakthrough())
         r = _etch(f)
         self.assertLess(abs(_surface_at(r, 25.0)), 0.01)
 
@@ -162,7 +162,7 @@ class TestZhang2023(unittest.TestCase):
     """The published recipe against its measurement: 100 cycles etch a 6 um
     wide opening under 6 um of AZ4620 to 30.72 um, with 70 - 80 nm scallops
     (the paper gives no angle of the Bosch trench's walls).  The film's
-    growth is the one fitted constant (a breakthrough of 7.25 s, to the
+    growth is the one fitted constant (a breakthrough of 7.0 s, to the
     depth); the scallops follow from the film's radicals, each with its
     measured sticking."""
 

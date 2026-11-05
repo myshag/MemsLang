@@ -16,103 +16,104 @@
   "power": 600,
   "frequency": 13560000,
   "resistance": 0.5,
-  "current": 30.54324373,
-  "voltage": 2512.023059
+  "current": 35.18742534,
+  "voltage": 2903.078354
  },
  "converged": true,
- "absorbed_power": 366.7777046,
- "ne_max": 1.031165057e+17,
- "Te_mean": 1.852958037,
+ "absorbed_power": 290.4613428,
+ "ne_max": 5.774719871e+16,
+ "Te_mean": 2.015924475,
  "species": [
   {
    "name": "C4F8",
-   "density": 2.11644749e+20,
-   "flux": 9.661499526e+21
+   "density": 3.104618683e+20,
+   "flux": 1.417246215e+22
   },
   {
    "name": "C3F5",
-   "density": 1.868796989e+20,
-   "flux": 1.054073249e+22
+   "density": 2.375400271e+20,
+   "flux": 1.339816949e+22
   },
   {
    "name": "C2F6",
-   "density": 1.153667714e+19,
-   "flux": 6.340272094e+20
+   "density": 2.925700393e+19,
+   "flux": 1.607892492e+21
   },
   {
    "name": "C2F4",
-   "density": 1.071475613e+19,
-   "flux": 6.917263626e+20
+   "density": 2.064056628e+19,
+   "flux": 1.33251972e+21
   },
   {
    "name": "CF4",
-   "density": 5.562907599e+19,
-   "flux": 3.828560752e+21
+   "density": 1.052068418e+20,
+   "flux": 7.24065209e+21
   },
   {
    "name": "CF3",
-   "density": 7.254366984e+19,
-   "flux": 5.638215578e+21
+   "density": 5.441237207e+19,
+   "flux": 4.229020733e+21
   },
   {
    "name": "CF2",
-   "density": 2.207630413e+20,
-   "flux": 2.015549196e+22
+   "density": 1.370634349e+20,
+   "flux": 1.251378376e+22
   },
   {
    "name": "CF",
-   "density": 7.497540616e+19,
-   "flux": 8.692753848e+21
+   "density": 4.823875416e+18,
+   "flux": 5.59286888e+20
   },
   {
    "name": "C",
-   "density": 6.650275105e+18,
-   "flux": 1.238889189e+21
+   "density": 4.229962229e+16,
+   "flux": 7.880056679e+18
   },
   {
    "name": "F",
-   "density": 6.832995864e+19,
-   "flux": 1.012137816e+22
+   "density": 2.021884606e+19,
+   "flux": 2.994917472e+21
   },
   {
    "name": "C3F5+",
-   "density": 8059306374000000.0,
-   "flux": 7.470923771e+17
+   "density": 2.021885879e+16,
+   "flux": 1.154015049e+18
   },
   {
    "name": "C2F4+",
-   "density": 1.484352373e+16,
-   "flux": 1.573915164e+18
+   "density": 3.594779188e+16,
+   "flux": 2.33519468e+18
   },
   {
    "name": "CF3+",
-   "density": 3.601610637e+16,
-   "flux": 4.594125305e+18
+   "density": 3.952671924e+16,
+   "flux": 3.070042627e+18
   },
   {
    "name": "CF2+",
-   "density": 9.152185956e+16,
-   "flux": 1.370604933e+19
+   "density": 7.143381558e+16,
+   "flux": 6.48353369e+18
   },
   {
    "name": "CF+",
-   "density": 2.704306281e+16,
-   "flux": 5.13941258e+18
+   "density": 9141536466000000.0,
+   "flux": 1.046687504e+18
   },
   {
    "name": "F+",
-   "density": 200401625100000.0,
-   "flux": 4.862969823e+16
+   "density": 106495682700000.0,
+   "flux": 1.549141184e+16
   },
   {
    "name": "F-",
-   "density": 7.456775482e+16,
+   "density": 1.186280189e+17,
    "flux": 0
   }
  ],
  "source": "soidlc/reactors/bosch_passivation.ferma (the reference recipe)",
  "wafer": {
   "diameter": 0.15,
+  "open_fraction": 1,
   "material": "",
   "reacts": false
  }
