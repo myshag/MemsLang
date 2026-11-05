@@ -16,7 +16,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from soidlc import plasma                                  # noqa: E402
+from soidlc import film, plasma                            # noqa: E402
 from soidlc.recipe_physics import BoschProcess             # noqa: E402
 
 _DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -43,8 +43,11 @@ class TestSummaries(unittest.TestCase):
         d = plasma.passivation_plasma(_summary("bosch_passivation"))
         s = {x["name"]: x["flux"] for x in _summary("bosch_passivation")["species"]
              if "flux" in x}  # F(s): a coverage of the walls
-        self.assertAlmostEqual(d.film_flux / (s["CF"] + s["CF2"] + s["CF3"]), 1.0,
-                               places=12)
+        # every neutral species, the film's radicals among them
+        self.assertEqual(d.radicals, {k: v for k, v in s.items()
+                                      if not k.endswith(("+", "-"))})
+        self.assertEqual({p.name for p in film.precursors(d.radicals)},
+                         {"CF", "CF2", "CF3", "C", "C2F4", "C3F5"})
         self.assertGreater(d.ion_flux, 0.0)
 
     def test_failures_reported(self):
@@ -86,7 +89,8 @@ class _StandIn:
     def passivation(self, coil_w, pressure_mtorr, c4f8_sccm):
         self.calls += 1
         return plasma.PassivationPlasma(
-            film_flux=5e22 * (coil_w / 600.0) * (c4f8_sccm / 100.0),
+            radicals={k: v * (coil_w / 600.0) * (c4f8_sccm / 100.0)
+                      for k, v in (("CF", 1e22), ("CF2", 2e22), ("CF3", 5e21))},
             ion_flux=2e19 * coil_w / 600.0, ne=1e17, te=3.0)
 
 
@@ -174,7 +178,7 @@ class TestFermaSolver(unittest.TestCase):
         self.assertGreater(hot.etch_rate, ref.etch_rate)
         self.assertGreater(hot.ion_share, ref.ion_share)
         d = p.passivation(600, 30, 100)
-        self.assertGreater(d.film_flux, 0.0)
+        self.assertGreater(film.growth(film.precursors(d.radicals)), 0.0)
         r, _ = BoschProcess(plasma=p, bias_w=40).to_recipe()
         r0, _ = BoschProcess(plasma=p).to_recipe()
         self.assertGreater(r.etch_per_cycle, r0.etch_per_cycle)

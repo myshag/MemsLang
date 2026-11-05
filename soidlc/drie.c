@@ -4,8 +4,8 @@
  * that reach it and the surface kinetics turns them into rates.
  *
  * Transport (ballistic, the feature is far below the mean free path):
- *   - neutrals (F in the etch step, the film-forming CFx in the passivation
- *     step) come from an isotropic gas above the feature, `G0` per m^2 and s
+ *   - neutrals (F in the etch step, each of the film's radicals in the
+ *     passivation step) come from an isotropic gas above the feature, `G0` per m^2 and s
  *     onto an open flat surface, and are re-emitted diffusely where they do
  *     not stick: G_s = G0 F_s,sky + sum_t F_st (1 - S_t) G_t, with the view
  *     factors F (cosine law; in the cross-section of a long trench 1/2 cos phi
@@ -23,8 +23,9 @@
  *     etch rate;
  *   - the fluorocarbon film (Kokkoris, Tserepi, Boudouvis & Gogolides, J. Vac.
  *     Sci. Technol. A 22, 1896 (2004), as used by Ertl & Selberherr, Microelectron.
- *     Eng. 87, 20 (2010)): deposited by the passivation step, betaDep per CFx and
- *     alphaDep per ion that arrive; removed in the etch step, alphaPoly per ion
+ *     Eng. 87, 20 (2010)): deposited by the passivation step, each radical
+ *     joining it with its own probability (its volume each; soidlc/film.py)
+ *     and alphaDep per ion that arrives; removed in the etch step, alphaPoly per ion
  *     and betaPoly per F; silicon and the mask etch only where it is gone.  It
  *     is a layer with its thickness, as in ViennaPS: a second level set (the
  *     top: the substrate and the film) over the substrate's.  The passivation
@@ -48,7 +49,9 @@
  * the CFL limit; a film that clears within a step lets its surface etch for
  * the rest of it.
  *
- * Parameters (p) in the order of the enum below; out: the open flat wafer's
+ * Parameters (p) in the order of the enum below, then P_NPREC triples of each
+ * film radical's flux onto the open flat wafer, its sticking and the film it
+ * adds when it sticks (m^3); out: the open flat wafer's
  * etch rate (m/s) and coverage, the film after the first passivation step on
  * the silicon that sees most of the plasma (m), when the first etch step clears
  * the first film (s, -1: never), flux evaluations, time steps.
@@ -56,10 +59,11 @@
 #include "levelset.h"
 
 enum {
-    P_CYCLES, P_TETCH, P_TPASS, P_GF, P_GIE, P_EE, P_GCF, P_GIP,
+    P_CYCLES, P_TETCH, P_TPASS, P_GF, P_GIE, P_EE, P_GIP,
     P_SF, P_KTH, P_ASI, P_ETHSI, P_APOLY, P_BPOLY, P_AMASK, P_BMASK,
-    P_EREF, P_ETHION, P_BDEP, P_ADEP, P_SDEP, P_SPOLY, P_SMASK, P_SIGMA,
-    P_NRAYS, P_NIONS, P_NSI, P_CFL, P_REINIT, P_ESI, P_LSIA, P_LSIB, P_N
+    P_EREF, P_ETHION, P_ADEP, P_SPOLY, P_SMASK, P_SIGMA,
+    P_NRAYS, P_NIONS, P_NSI, P_CFL, P_REINIT, P_ESI, P_LSIA, P_LSIB, P_NPREC,
+    P_N
 };
 enum { O_ETCH0, O_THETA0, O_FILM0, O_CLEAR0, O_FLUXCALLS, O_STEPS, O_N };
 
@@ -488,24 +492,29 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
     int sc = 0;
 
     for (int c = 0; c < cycles; c++) {
-        /* ---- passivation: the film grows where the CFx and ions arrive,
-         * its surface moving into the void ---- */
+        /* ---- passivation: the film grows where its radicals stick and the
+         * ions arrive, its surface moving into the void ---- */
         double t = 0.0, moved = 1e30, vmax = 0.0;
         while (t < p[P_TPASS] - 1e-12) {
             if (moved > 0.5 * dx) {
                 find_surface(top, phi, mask, nx, nz, dx, j_box, &s, cell2sp);
                 views_compute(top, &s, cell2sp, nx, nz, nr, ni, sigma, &v);
                 state_size(&st, s.n);
-                for (int m = 0; m < s.n; m++) st.keep[m] = 1.0 - p[P_SDEP];
-                radiosity(&v, s.n, st.keep, st.G, 0);
-                out[O_FLUXCALLS] += 1;
-                for (int m = 0; m < s.n; m++) st.Gi[m] = v.ion[m];
-                smooth_sp(&s, cell2sp, nx, nz, st.G, st.keep);
-                smooth_sp(&s, cell2sp, nx, nz, st.Gi, st.keep);
+                /* the growth (m/s): the ions', then each radical's with its
+                 * own sticking (its transport into the feature too) */
+                for (int m = 0; m < s.n; m++) st.v[m] = p[P_ADEP] * p[P_GIP] * v.ion[m];
+                for (int q = 0; q < (int)p[P_NPREC]; q++) {
+                    const double *r = p + P_N + 3 * q;     /* flux, sticking, volume */
+                    if (!(r[0] > 0.0 && r[1] > 0.0)) continue;
+                    for (int m = 0; m < s.n; m++) st.keep[m] = 1.0 - r[1];
+                    radiosity(&v, s.n, st.keep, st.G, 0);
+                    out[O_FLUXCALLS] += 1;
+                    for (int m = 0; m < s.n; m++) st.v[m] += r[0] * r[1] * r[2] * st.G[m];
+                }
+                smooth_sp(&s, cell2sp, nx, nz, st.v, st.keep);
                 vmax = 0.0;
                 for (int m = 0; m < s.n; m++) {
-                    st.v[m] = (p[P_BDEP] * p[P_GCF] * st.G[m]
-                               + p[P_ADEP] * p[P_GIP] * st.Gi[m]) * 1e6;  /* um/s */
+                    st.v[m] *= 1e6;                                       /* um/s */
                     vmax = dmax(vmax, st.v[m]);
                 }
                 label_all(cell2sp, nx, nz, band, queue);
@@ -547,12 +556,12 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
                 for (int m = 0; m < s.n; m++) bare += s.h[m] <= 0.0;
                 if (c == 0 && bare_last < 0) {
                     /* the film after the first passivation step on the
-                     * silicon that sees the most of the plasma, and where
-                     * it is (for when it clears) */
+                     * silicon that sees the most of the plasma (its gas and
+                     * its ions), and where it is (for when it clears) */
                     double best = -1.0;
                     for (int m = 0; m < s.n; m++)
-                        if (s.mat[m] == 0 && v.sky[m] > best) {
-                            best = v.sky[m];
+                        if (s.mat[m] == 0 && v.sky[m] + v.ion[m] > best) {
+                            best = v.sky[m] + v.ion[m];
                             out[O_FILM0] = s.h[m] * 1e-6;
                             kclear = s.cell[m];
                         }
@@ -620,7 +629,10 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
 void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
               double dx, int j_box, const double *p, double *out) {
     double kpoly = p[P_APOLY] / dmax(1e-12, sqrt(p[P_EREF]) - sqrt(p[P_ETHION]));
-    double dep = (p[P_BDEP] * p[P_GCF] + p[P_ADEP] * p[P_GIP]) * p[P_TPASS];
+    double dep = p[P_ADEP] * p[P_GIP];
+    for (int q = 0; q < (int)p[P_NPREC]; q++)
+        dep += p[P_N + 3 * q] * p[P_N + 3 * q + 1] * p[P_N + 3 * q + 2];
+    dep *= p[P_TPASS];
     double strip = (ion_yield(p[P_EE], kpoly, p[P_ETHION]) * p[P_GIE]
                     + p[P_BPOLY] * p[P_GF]) * p[P_TETCH];
     double h = 0.0, peak = 0.0;

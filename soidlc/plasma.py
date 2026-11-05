@@ -32,7 +32,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
 _REACTORS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reactors")
@@ -41,10 +41,6 @@ PASSIVATION_REACTOR = os.path.join(_REACTORS, "bosch_passivation.ferma")
 # the Oxford Plasmalab System 100 ICP180 of recipe_physics.ZHANG2023
 ICP180_ETCH = os.path.join(_REACTORS, "icp180_etch.ferma")
 ICP180_PASSIVATION = os.path.join(_REACTORS, "icp180_passivation.ferma")
-
-# the fluorocarbon radicals that build the passivation film
-_FILM_RADICALS = ("CF", "CF2", "CF3")
-
 
 @dataclass(frozen=True)
 class EtchPlasma:
@@ -61,10 +57,12 @@ class EtchPlasma:
 @dataclass(frozen=True)
 class PassivationPlasma:
     """What the passivation step's plasma gives the wafer (SI units)."""
-    film_flux: float      # CF + CF2 + CF3 onto the wafer, m^-2 s^-1
     ion_flux: float       # positive ions onto the wafer, m^-2 s^-1
     ne: float             # electron density, m^-3
     te: float             # electron temperature, eV
+    # every neutral species onto the wafer, m^-2 s^-1 (the film's radicals
+    # among them: soidlc.film)
+    radicals: Dict[str, float] = field(default_factory=dict)
 
 
 def _species(summary: dict) -> Dict[str, float]:
@@ -107,9 +105,10 @@ def passivation_plasma(summary: dict) -> PassivationPlasma:
             "plasma: the passivation step's discharge did not converge")
     fluxes = _species(summary)
     return PassivationPlasma(
-        film_flux=sum(fluxes.get(k, 0.0) for k in _FILM_RADICALS),
         ion_flux=_ion_flux(fluxes), ne=summary["ne_max"],
-        te=summary["Te_mean"])
+        te=summary["Te_mean"],
+        radicals={k: v for k, v in fluxes.items()
+                  if not k.endswith(("+", "-")) and "(s)" not in k})
 
 
 class FermaPlasma:

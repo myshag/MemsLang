@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from . import film
 from .etch import BoschRecipe
 
 # reference recipe (a typical SPTS/STS-class Bosch process); the calibration
@@ -128,7 +129,8 @@ class BoschProcess:
         def iso(x):  # thermal (isotropic F) over ion-driven (directional)
             return (1.0 - x.ion_share) / x.ion_share
         return dict(rate=e.etch_rate / e0.etch_rate, iso=iso(e) / iso(e0),
-                    deposit=d.film_flux / d0.film_flux * tp,
+                    deposit=film.growth(film.precursors(d.radicals))
+                    / film.growth(film.precursors(d0.radicals)) * tp,
                     sidewall=e.f_flux / e0.f_flux * te,
                     energy=e.ion_energy / e0.ion_energy)
 
@@ -213,8 +215,11 @@ class BoschProcess:
                 % (e.ne, e.te, e.f_flux, e.ion_flux, e.ion_energy,
                    e.etch_rate * 6e10, 100 * e.ion_share))
             out.append(
-                "plasma: passivation step ne=%.3g m^-3 Te=%.2f eV, CFx "
-                "%.3g m^-2 s^-1" % (d.ne, d.te, d.film_flux))
+                "plasma: passivation step ne=%.3g m^-3 Te=%.2f eV, film from "
+                "its radicals %.3g nm/s (%s)" % (
+                    d.ne, d.te, 1e9 * film.growth(film.precursors(d.radicals)),
+                    ", ".join("%s %.3g" % (p.name, p.flux)
+                              for p in film.precursors(d.radicals))))
         out += ["recipe: WARNING: " + m for m in w]
         return out
 
