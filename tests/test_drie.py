@@ -157,12 +157,12 @@ class TestTransport(unittest.TestCase):
 class TestZhang2023(unittest.TestCase):
     """The published recipe against its measurement: 100 cycles etch a 6 um
     trench under 6 um of AZ4620 to 30.72 um.  The film's growth is the one
-    fitted constant: a breakthrough of 4.15 s.  The scallops (70 - 80 nm
+    fitted constant: a breakthrough of 5.9 s.  The scallops (70 - 80 nm
     measured) need a finer grid than a test can afford (see the README)."""
 
     def test_depth_after_100_cycles(self):
         m = ZHANG2023_MEASURED
-        f = _reference(cycles=m["cycles"]).calibrated(4.15)
+        f = _reference(cycles=m["cycles"]).calibrated(5.9)
         r = etch.simulate([(10.0, 16.0)], domain_w=26.0, depth=40.0, dx=0.1,
                           fluxes=f, box_at=40.0, mask_thick=6.0)
         self.assertAlmostEqual(r.depths[0] / m["depth_um"], 1.0, delta=0.03)
@@ -173,7 +173,7 @@ class TestZhang2023(unittest.TestCase):
         e = plasma.etch_plasma(_summary("icp180_etch"))
         self.assertAlmostEqual(_summary("icp180_etch")["wafer"]["open_fraction"],
                                0.013)
-        self.assertAlmostEqual(e.etch_rate * 6e7, 3.9, delta=0.05)   # um/min
+        self.assertAlmostEqual(e.etch_rate * 6e7, 6.91, delta=0.05)   # um/min
 
 
 class TestCalibration(unittest.TestCase):

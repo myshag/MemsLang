@@ -395,7 +395,9 @@ practical):
   fluorocarbon film on every face from the CFx and ions that arrive; the etch
   step's ions and F wear it down; where it is gone, silicon is etched through
   adsorbed F as on Ferma's wafer (Belen et al., JVST A 23, 99 (2005): F
-  sticking, thermal and ion-enhanced removal), and a solid cell is etched
+  sticking, thermal and ion-enhanced removal; the thermal removal ten times
+  theirs, as Ferma's, from the unbiased etch rate of Tinck et al., Plasma
+  Process. Polym. 14, e1700018 (2017)), and a solid cell is etched
   through any bare face, so the etchant undercuts a protected wall from below
   (scallops). The mask is worn by the ions and F. The film's and the mask's
   coefficients are the published set of Kokkoris et al., JVST A 22, 1896 (2004)
@@ -416,14 +418,15 @@ practical):
   Its plasmas are Ferma's for an ICP180-like reactor (`reactors/icp180_*.ferma`:
   the tool's drawings are not published, so the source is a 180 mm tube with a
   three-turn coil; needs Ferma's `wafer_open_fraction`): the open silicon etches
-  at 3.9 µm/min (a bare wafer would take up the F: 1.5). With the published
-  film growth the film (190 nm) would take 17 s to clear against an 8 s step,
-  and nothing would etch; a breakthrough of 4.15 s fits the depth:
+  at 6.9 µm/min, 71 % of it without the ions (a bare wafer would take up the F:
+  1.3). With the published film growth the film (190 nm) would take 18 s to
+  clear against an 8 s step, and nothing would etch; a breakthrough of 5.9 s
+  fits the depth:
 
   | | model | measured |
   |---|---|---|
   | depth after 100 cycles (fitted) | 30.7 µm | 30.72 µm |
-  | advance per cycle, first 12 cycles | 295 nm | 307 nm (mean of 100) |
+  | advance per cycle, first 12 cycles | 312 nm | 307 nm (mean of 100) |
   | width | 6.0 µm | 6 µm |
   | scallops (peak to valley, 10 to 25 nm cells) | 30 - 55 nm | 70 - 80 nm |
 

@@ -30,14 +30,14 @@ def _summary(step):
 class TestSummaries(unittest.TestCase):
     def test_etch_step(self):
         e = plasma.etch_plasma(_summary("bosch_etch"))
-        self.assertAlmostEqual(e.etch_rate, 2.561064057e-08)
-        self.assertAlmostEqual(e.ion_share, 0.7312219801)
-        self.assertAlmostEqual(e.f_flux / 1.340075705e+22, 1.0, places=12)
+        self.assertAlmostEqual(e.etch_rate, 2.096576113e-08)
+        self.assertAlmostEqual(e.ion_share, 0.2089357316)
+        self.assertAlmostEqual(e.f_flux / 1.363057793e+22, 1.0, places=12)
         # the sulfur fluoride ions, S+, F2+ and the etch products' SiFx+
-        self.assertAlmostEqual(e.ion_flux / 4.71e19, 1.0, delta=0.01)
-        # the flux-weighted mean of the ten ions' energies (100.0 - 101.1 eV)
-        self.assertGreater(e.ion_energy, 100.5)
-        self.assertLess(e.ion_energy, 100.8)
+        self.assertAlmostEqual(e.ion_flux / 4.02e19, 1.0, delta=0.01)
+        # the flux-weighted mean of the ten ions' energies (119.6 - 120.8 eV)
+        self.assertGreater(e.ion_energy, 120.0)
+        self.assertLess(e.ion_energy, 120.4)
 
     def test_passivation_step(self):
         d = plasma.passivation_plasma(_summary("bosch_passivation"))

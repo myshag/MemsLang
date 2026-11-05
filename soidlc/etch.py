@@ -100,7 +100,10 @@ class SurfaceKinetics:
     at ``e_ref`` and scaled with sqrt(E) - sqrt(``e_th_ion``) -- both energies
     are assumptions, not from that paper."""
     f_sticking: float = 0.7          # F on the free silicon sites
-    thermal: float = 3e21            # F m^-2 s^-1 removed at full coverage (SiF4)
+    # F m^-2 s^-1 removed at full coverage (SiF4): ten times Belen et al.'s,
+    # as in Ferma's built-in "sf6" (Tinck et al., Plasma Process. Polym. 14,
+    # e1700018 (2017): unbiased silicon at 123 nm/s in SF6)
+    thermal: float = 3e22
     ion_a: float = 7.0               # Si per ion per sqrt(eV) at full coverage (SiF2)
     ion_eth: float = 15.0            # eV, silicon's threshold
     alpha_poly: float = 125e-30      # m^3 of film per ion (at e_ref)
