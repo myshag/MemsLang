@@ -10,7 +10,8 @@ reference is the published recipe of Zhang et al., Micromachines 14, 846
 (2023) (recipe_physics.ZHANG2023): its plasmas are Ferma's for an Oxford
 ICP180-like reactor with 1.3 % of the wafer open (tests/data, trimmed
 ferma_icp summaries), and its measured depth checks the model with its one
-fitted constant.
+fitted constant. ViennaPS's Bosch example, run in ViennaPS on the same
+parameters, checks it code to code.
 """
 import json
 import math
@@ -174,6 +175,90 @@ class TestZhang2023(unittest.TestCase):
         self.assertAlmostEqual(_summary("icp180_etch")["wafer"]["open_fraction"],
                                0.013)
         self.assertAlmostEqual(e.etch_rate * 6e7, 6.91, delta=0.05)   # um/min
+
+
+# ViennaPS's Bosch example (examples/boschProcess/configBoschRayTracing.txt:
+# Ertl & Selberherr, Microelectron. Eng. 87, 20 (2010), Kokkoris et al.'s
+# volumes per particle) in 2D: a 2 um trench under 0.6 um of mask in a 3.5 um
+# cell, 1e19 F and 4.375e15 ions per cm^2 and s in the etch step, 2e18 CFx and
+# 3.125e15 ions in the passivation step; silicon's linear law (270 A^3 per
+# ion, 0.9 A^3 per F arriving, F sticking 0.2), ions from cos^1000.
+_ES_CELL, _ES_OPENING, _ES_MASK = 3.5, (0.75, 2.75), 0.6
+
+
+def _es_fluxes(**kw):
+    a3 = 1e-30
+    s = etch.SurfaceKinetics(
+        f_sticking=0.2, si_alpha=270 * a3, si_beta=0.9 * a3,
+        alpha_poly=125 * a3, beta_poly=0.03 * a3, alpha_mask=13.5 * a3,
+        beta_mask=0.045 * a3, alpha_dep=10 * a3, beta_dep=0.5 * a3,
+        stick_dep=0.1, stick_poly=0.1, stick_mask=0.2, e_ref=100.0,
+        ion_sigma_deg=math.degrees(1 / math.sqrt(1000)))
+    kw = {"f_flux": 1e23, "ion_flux": 4.375e19, "ion_energy": 100.0,
+          "film_flux": 2e22, "pass_ion_flux": 3.125e19, "t_etch": 11.0,
+          "t_pass": 5.0, "cycles": 10, "surface": s, **kw}
+    return etch.BoschFluxes(**kw)
+
+
+def _es_heights(r):
+    """The front's height (um above the wafer's original top) in a column at
+    x, and the left wall's distance from the opening's centre at height y."""
+    j0 = int(round((_ES_MASK + 2 * r.dx) / r.dx))
+    p = lambda i, j: r.phi[i + r.nx * j]
+
+    def height(i):
+        for j in range(r.nz - 1):
+            a, b = p(i, j), p(i, j + 1)
+            if a > 0 >= b:
+                return (j0 - j - a / (a - b)) * r.dx
+
+    def half_width(y):
+        jf = j0 - y / r.dx
+        j, t = int(jf), jf - int(jf)
+        row = [p(i, j) * (1 - t) + p(i, j + 1) * t for i in range(r.nx)]
+        for i in range(r.nx // 2, 0, -1):
+            a, b = row[i], row[i - 1]
+            if a > 0 >= b:
+                return r.nx * r.dx / 2 - ((i + 0.5) - a / (a - b)) * r.dx
+    return height, half_width
+
+
+class TestAgainstViennaPS(unittest.TestCase):
+    """Against ViennaPS 4.7.0 (MultiParticleProcess, 2D, 25 nm grid, run on
+    the same parameters): without the film the two codes' transport (F
+    re-emitted with sticking 0.2, the ions' shadowing) and the undercut below
+    the mask agree; over the Bosch cycles the depth and the mask's wear do,
+    while ViennaPS's trench stays narrower (its film is a layer with a
+    thickness, whose foot on the mask's wall keeps the silicon below it until
+    the undercut reaches it; here the film is a thickness per face)."""
+
+    def test_etch_without_film(self):
+        # 6 s of the etch step only: ViennaPS 0.563 um deep, the wall
+        # 1.281, 1.208, 1.052 um from the centre 0.1, 0.3, 0.45 um down
+        r = etch.simulate([_ES_OPENING], _ES_CELL, 2.0, dx=0.025,
+                          mask_thick=_ES_MASK, box=False,
+                          fluxes=_es_fluxes(t_etch=6.0, t_pass=0.0, cycles=1,
+                                            film_flux=0.0, pass_ion_flux=0.0))
+        height, half_width = _es_heights(r)
+        self.assertAlmostEqual(-height(r.nx // 2), 0.563, delta=0.02)
+        for y, w in ((-0.1, 1.281), (-0.3, 1.208), (-0.45, 1.052)):
+            self.assertAlmostEqual(half_width(y), w, delta=0.02)
+
+    def test_bosch_depth_and_mask(self):
+        # 10 cycles: ViennaPS 4.458 um deep, 0.350 um of mask left
+        r = etch.simulate([_ES_OPENING], _ES_CELL, 6.0, dx=0.1,
+                          mask_thick=_ES_MASK, box=False, fluxes=_es_fluxes())
+        height, _ = _es_heights(r)
+        self.assertAlmostEqual(-height(r.nx // 2) / 4.458, 1.0, delta=0.05)
+        self.assertAlmostEqual(height(0), 0.350, delta=0.01)
+
+    def test_linear_law_on_the_open_wafer(self):
+        f = _es_fluxes()
+        r = etch.simulate([(0.0, 3.5)], 3.5, 1.0, dx=0.1, mask_thick=0.1,
+                          box=False, fluxes=replace(f, cycles=1))
+        rate = (270e-30 * 4.375e19 + 0.9e-30 * 1e23)
+        self.assertAlmostEqual(r.diagnostics["etch_rate"] / rate, 1.0,
+                               places=9)
 
 
 class TestCalibration(unittest.TestCase):

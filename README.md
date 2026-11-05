@@ -437,6 +437,30 @@ practical):
   angular yield are not modelled). Not modelled either: the steps' gas
   switching in time, charging, the 5 sccm admixtures and the passivation
   step's bias of the recipe.
+  **Against ViennaPS** (`tests/test_drie.py::TestAgainstViennaPS`): its Bosch
+  example (Ertl & Selberherr 2010, the same Kokkoris et al. coefficients) in
+  2D, run in ViennaPS 4.7.0 on a 25 nm grid; here with silicon's linear law
+  (`SurfaceKinetics.si_alpha`, `si_beta`: 270 Å³ per ion, 0.9 Å³ per F, F
+  sticking 0.2) in place of Belen's. A 2 µm trench under 0.6 µm of mask, 10
+  cycles of 5 s of film and 11 s of etching:
+
+  | | here (25 nm cells) | ViennaPS |
+  |---|---|---|
+  | 6 s of the etch step without film: depth | 0.559 µm | 0.563 µm |
+  | the same: wall 0.1 / 0.3 / 0.45 µm down, from the centre | 1.288 / 1.208 / 1.045 µm | 1.281 / 1.208 / 1.052 µm |
+  | 1 cycle: depth | 0.518 µm | 0.490 µm |
+  | 1 cycle: undercut below the mask | 0.33 µm | 0.18 µm |
+  | 10 cycles: depth | 4.56 µm | 4.46 µm |
+  | 10 cycles: mask left | 0.350 µm | 0.350 µm |
+  | 10 cycles: wall 1 / 2 / 3 / 4 µm down | 1.32 / 1.25 / 1.17 / 1.17 µm | 1.16 / 1.09 / 1.01 / 1.04 µm |
+
+  Without the film the two agree to 0.01 - 0.03 µm (the F's and ions'
+  transport and the undercut below the mask), and so do the depth and the
+  mask's wear; the trench here is 0.3 µm wider. The difference is the film:
+  ViennaPS's is a layer with a thickness (a level set over the others), and
+  its foot on the mask's wall keeps the silicon below it until the undercut
+  reaches it; here the film is a thickness per face, and the floor next to
+  the wall is bared when the rest of the floor is.
 - **Anisotropic wet etch** (`koh.py`) — KOH/TMAH bulk micromachining with an
   orientation-dependent rate: {111} planes ~100× slower meet a (100) surface at
   54.74°, so a mask opening self-organises into the classic facetted pit /

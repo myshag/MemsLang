@@ -119,6 +119,12 @@ class SurfaceKinetics:
     stick_mask: float = 0.2          # F lost on the mask (and the stop layer)
     ion_sigma_deg: float = 2.0       # spread of the ions' angles
     n_si: float = 4.99e28            # silicon atoms per m^3
+    # silicon's linear law in place of Belen's, m^3 per ion and per F
+    # arriving (F sticking with f_sticking): Kokkoris et al.'s, as Ertl &
+    # Selberherr and ViennaPS's Bosch example take it (270e-30, 0.9e-30 with
+    # f_sticking 0.2); 0: Belen's
+    si_alpha: float = 0.0
+    si_beta: float = 0.0
 
 
 @dataclass
@@ -225,7 +231,7 @@ class BoschFluxes:
                 self.rays, self.ion_angles, s.n_si, self.cfl,
                 self.reinit_stride,
                 self.si_energy if self.si_energy is not None
-                else self.ion_energy]
+                else self.ion_energy, s.si_alpha, s.si_beta]
 
 
 @dataclass

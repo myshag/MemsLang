@@ -56,7 +56,7 @@ enum {
     P_CYCLES, P_TETCH, P_TPASS, P_GF, P_GIE, P_EE, P_GCF, P_GIP,
     P_SF, P_KTH, P_ASI, P_ETHSI, P_APOLY, P_BPOLY, P_AMASK, P_BMASK,
     P_EREF, P_ETHION, P_BDEP, P_ADEP, P_SDEP, P_SPOLY, P_SMASK, P_SIGMA,
-    P_NRAYS, P_NIONS, P_NSI, P_CFL, P_REINIT, P_ESI, P_N
+    P_NRAYS, P_NIONS, P_NSI, P_CFL, P_REINIT, P_ESI, P_LSIA, P_LSIB, P_N
 };
 enum { O_ETCH0, O_THETA0, O_FILM0, O_CLEAR0, O_FLUXCALLS, O_STEPS, O_N };
 
@@ -376,12 +376,15 @@ static void etch_fluxes(const double *p, const Surf *s, const Views *v,
         st->theta[m] = 1.0;
         st->film[m] = poly[s->cell[m]];
     }
+    /* the linear law (P_LSIA, P_LSIB > 0): F sticks on silicon with P_SF,
+       no coverage */
+    int linear = p[P_LSIA] > 0.0 || p[P_LSIB] > 0.0;
     for (int outer = 0; outer < 40; outer++) {
         for (int m = 0; m < n; m++) {
             double S;
             if (st->film[m] > 0.0) S = p[P_SPOLY];
             else if (s->mat[m] != 0) S = p[P_SMASK];
-            else S = p[P_SF] * (1.0 - st->theta[m]);
+            else S = p[P_SF] * (linear ? 1.0 : 1.0 - st->theta[m]);
             st->keep[m] = 1.0 - S;
         }
         radiosity(v, n, st->keep, st->G, outer > 0);
@@ -390,7 +393,7 @@ static void etch_fluxes(const double *p, const Surf *s, const Views *v,
             double G = p[P_GF] * st->G[m];
             double sG = p[P_SF] * G;
             double loss = p[P_KTH] + 2.0 * Ysi * st->Gi[m];
-            double th = sG > 0 ? sG / (sG + loss) : 0.0;
+            double th = sG > 0 && !linear ? sG / (sG + loss) : 0.0;
             change = dmax(change, fabs(th - st->theta[m]));
             st->theta[m] = th;
         }
@@ -402,7 +405,7 @@ static void etch_fluxes(const double *p, const Surf *s, const Views *v,
     for (int m = 0; m < n; m++) {
         double sG = p[P_SF] * st->G[m];
         double loss = p[P_KTH] + 2.0 * Ysi * st->Gi[m];
-        st->theta[m] = sG > 0 ? sG / (sG + loss) : 0.0;
+        st->theta[m] = sG > 0 && !linear ? sG / (sG + loss) : 0.0;
     }
 }
 
@@ -411,12 +414,18 @@ static double bare_rate(const double *p, const State *st, int m, int mat,
                         double Ysi, double Ymask) {
     if (mat == 1) return Ymask * st->Gi[m] + p[P_BMASK] * st->G[m];
     if (mat == 2) return 0.0;
+    if (p[P_LSIA] > 0.0 || p[P_LSIB] > 0.0)
+        return p[P_LSIA] * st->Gi[m] + p[P_LSIB] * st->G[m];
     return st->theta[m] * (0.25 * p[P_KTH] + Ysi * st->Gi[m]) / p[P_NSI];
 }
 
 static double flat_etch(const double *p, double *theta) {
     /* the open flat wafer: G = GF, Gi = GIE */
     double Ysi = ion_yield(p[P_ESI], p[P_ASI], p[P_ETHSI]);
+    if (p[P_LSIA] > 0.0 || p[P_LSIB] > 0.0) {
+        if (theta) *theta = 0.0;
+        return p[P_LSIA] * p[P_GIE] + p[P_LSIB] * p[P_GF];
+    }
     double sG = p[P_SF] * p[P_GF], loss = p[P_KTH] + 2.0 * Ysi * p[P_GIE];
     double th = sG / (sG + loss);
     if (theta) *theta = th;
