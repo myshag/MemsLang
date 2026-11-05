@@ -296,9 +296,10 @@ class TestCraigie2002(unittest.TestCase):
     Ferma's: tests/data/craigie_*), with the film's growth scaled as Zhang et
     al.'s fit (nothing fitted to it): with 60 sccm of C4F8, 7 s of passivation
     leave the walls bowing (89.4 degrees measured) and 12 s narrowing (90.5).
-    The model's swing is larger (25 nm cells: 87.8 and 91.7; on 12.5 nm cells
-    88.8 and 91.7), and 5 s break through the walls' film where the
-    measurement still shows 89 degrees: the README."""
+    The model's swing is larger (250 nm cells, as here: 87.8 and 91.7; 62.5
+    nm: 89.2, as measured, and 92.0), and on 250 nm cells 5 s break through
+    the walls' film where the measurement still shows 89 degrees: the
+    README."""
 
     @staticmethod
     def _angle(t_pass):

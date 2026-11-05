@@ -476,14 +476,14 @@ practical):
   | C₄F₈ 60 sccm, passivation | 5 s | 7 s | 10 s | 12 s | 15 s |
   |---|---|---|---|---|---|
   | measured | 88.9 | 89.4 | 89.75 | 90.5 | 90.6 |
-  | model, 25 nm cells | the walls' film breaks through | 87.8 | 90.2 | 91.7 | 93.8 |
-  | model, 12.5 nm cells | | 88.8 | 90.7 | 91.7 | |
-  | model, 6.25 nm cells | | 89.2 | | 92.0 | |
+  | model, 250 nm cells | the walls' film breaks through | 87.8 | 90.2 | 91.7 | 93.8 |
+  | model, 125 nm cells | | 88.8 | 90.7 | 91.7 | |
+  | model, 62.5 nm cells | | 89.2 | | 92.0 | |
 
   | passivation 10 s, C₄F₈ | 15 sccm | 20 | 30 | 60 | 80 |
   |---|---|---|---|---|---|
   | measured | 87.0 | 89.2 | 88.9 | 89.75 | 89.85 |
-  | model, 25 nm cells | 85.9 | 86.9 (12.5 nm: 88.0) | 88.6 | 90.2 | 90.8 |
+  | model, 250 nm cells | 85.9 | 86.9 (125 nm: 88.0) | 88.6 | 90.2 | 90.8 |
 
   The trends and where the walls turn vertical (10 s and 60 sccm; measured
   11 - 12 s and 50 sccm) come out without a fit. The angle needs fine cells:
@@ -493,7 +493,7 @@ practical):
   against 90.5): with a thick film the walls keep more of it than on the tool
   (candidates: the passivation step's 15 W of bias, the ions reflected onto
   the walls; the fluorocarbon the gas switching leaves in the etch step is 1
-  - 2 % of the passivation's in Ferma's transient model, too little). On 25 nm
+  - 2 % of the passivation's in Ferma's transient model, too little). On 250 nm
   cells 5 s of passivation break through the walls' film where the
   measurement shows 89 degrees. Ferma's global model does not converge for 5
   and 10 sccm of C₄F₈ at 450 W.
