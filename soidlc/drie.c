@@ -25,18 +25,21 @@
  *     Sci. Technol. A 22, 1896 (2004), as used by Ertl & Selberherr, Microelectron.
  *     Eng. 87, 20 (2010)): deposited by the passivation step, betaDep per CFx and
  *     alphaDep per ion that arrive; removed in the etch step, alphaPoly per ion
- *     and betaPoly per F; silicon and the mask etch only where it is gone.  Its
- *     thickness is sub-cell, carried by each surface point's face (its void
- *     interface cell): a wall that does not move keeps it, freshly etched
- *     silicon has none, and a solid cell is etched through any bare face (the
- *     etchant undercutting a protected wall from below reaches it);
+ *     and betaPoly per F; silicon and the mask etch only where it is gone.  It
+ *     is a layer with its thickness, as in ViennaPS: a second level set (the
+ *     top: the substrate and the film) over the substrate's.  The passivation
+ *     step moves the top into the void; the etch step moves it through the
+ *     film at the film's rate and, where the film is gone, through the
+ *     substrate at its own, and the substrate the top has passed is etched.
+ *     The film on a surface point is the top's distance above the substrate
+ *     (both are distance functions), so a film thinner than a cell is kept;
  *   - the mask: alphaMask per ion, betaMask per F.
  *   The ion yields of the film and the mask scale as sqrt(E) - sqrt(EthIon),
  *   equal to the published ones at Eref.  Silicon's yield takes its own energy
  *   (ESi: the yield averaged over the ions' energies, which the plasma's etch
  *   rate implies).
  *
- * Numerics: the surface points are the void cells next to the solid; their
+ * Numerics: the surface points are the top's void cells next to its solid; their
  * fluxes are averaged with their neighbours' along the surface (the rays'
  * sampling noise would roughen the front), recomputed when the front has moved
  * half a cell or the film has cleared from a twentieth of the surface.  The
@@ -65,14 +68,27 @@ enum { O_ETCH0, O_THETA0, O_FILM0, O_CLEAR0, O_FLUXCALLS, O_STEPS, O_N };
 
 typedef struct {
     int n, cap;
-    int *cell, *solid;          /* the void interface cell, its solid neighbour */
+    int *cell;                  /* the void interface cell of the top */
     double *x, *z, *nx, *nz;    /* closest point and normal, grid units */
-    unsigned char *mat;         /* 0 silicon, 1 mask, 2 stop layer */
+    double *h;                  /* the film on it, um (0: bare) */
+    unsigned char *mat;         /* the substrate under it: 0 silicon, 1 mask,
+                                   2 stop layer */
 } Surf;
 
 static void surf_free(Surf *s) {
-    free(s->cell); free(s->solid); free(s->x); free(s->z); free(s->nx);
-    free(s->nz); free(s->mat);
+    free(s->cell); free(s->x); free(s->z); free(s->nx); free(s->nz);
+    free(s->h); free(s->mat);
+}
+
+/* each surface point's film: the top's distance above the substrate at its
+ * void interface cell (both are distance functions), none below a fiftieth of
+ * a cell (where the two level sets coincide up to their redistancing) */
+static void film_at(Surf *s, const double *top, const double *sub, double dx) {
+    for (int m = 0; m < s->n; m++) {
+        int k = s->cell[m];
+        double h = sub[k] - top[k];
+        s->h[m] = h > 0.02 * dx ? h : 0.0;
+    }
 }
 
 /* the unit normal into the void (Sobel gradient: smoother than the central
@@ -92,9 +108,11 @@ static void normal_at(const double *phi, int nx, int nz, int i, int j,
     *ux = gx / g; *uz = gz / g;
 }
 
-/* the interface: void cells with a solid 4-neighbour; cell2sp maps them */
-static void find_surface(const double *phi, const unsigned char *mask, int nx,
-                         int nz, double dx, int j_box, Surf *s, int *cell2sp) {
+/* the top's interface: void cells with a solid 4-neighbour (cell2sp maps
+ * them), the film on each and the substrate (sub) under it */
+static void find_surface(const double *phi, const double *sub,
+                         const unsigned char *mask, int nx, int nz, double dx,
+                         int j_box, Surf *s, int *cell2sp) {
     int n = nx * nz;
     for (int k = 0; k < n; k++) cell2sp[k] = -1;
     s->n = 0;
@@ -110,7 +128,7 @@ static void find_surface(const double *phi, const unsigned char *mask, int nx,
             if (s->n == s->cap) {
                 s->cap = s->cap ? 2 * s->cap : 1024;
                 s->cell = realloc(s->cell, sizeof(int) * s->cap);
-                s->solid = realloc(s->solid, sizeof(int) * s->cap);
+                s->h = realloc(s->h, sizeof(double) * s->cap);
                 s->x = realloc(s->x, sizeof(double) * s->cap);
                 s->z = realloc(s->z, sizeof(double) * s->cap);
                 s->nx = realloc(s->nx, sizeof(double) * s->cap);
@@ -124,29 +142,24 @@ static void find_surface(const double *phi, const unsigned char *mask, int nx,
             s->nx[m] = ux; s->nz[m] = uz;
             s->x[m] = i + 0.5 - d * ux;
             s->z[m] = j + 0.5 - d * uz;
-            /* the solid cell under the closest point, else the nearest solid
-             * neighbour */
+            /* the substrate cell nearest to the closest point (under a film
+             * thicker than four cells: silicon, until it thins) */
             int si = (int)floor(s->x[m] - 0.5 * ux), sj = (int)floor(s->z[m] - 0.5 * uz);
             int best = -1;
             double bd = 1e30;
-            for (int b = -1; b <= 1; b++)
-                for (int a = -1; a <= 1; a++) {
-                    int ci = si + a, cj = sj + b;
-                    if (ci < 0 || ci >= nx || cj < 0 || cj >= nz) continue;
-                    if (phi[IDX(ci, cj)] > 0.0) continue;
-                    double ex = ci + 0.5 - s->x[m], ez = cj + 0.5 - s->z[m];
-                    double dd = ex * ex + ez * ez;
-                    if (dd < bd) { bd = dd; best = IDX(ci, cj); }
-                }
-            if (best < 0) {          /* the 4-neighbour that made it interface */
-                if (i > 0 && phi[IDX(i - 1, j)] <= 0.0) best = IDX(i - 1, j);
-                else if (i < nx - 1 && phi[IDX(i + 1, j)] <= 0.0) best = IDX(i + 1, j);
-                else if (j < nz - 1 && phi[IDX(i, j + 1)] <= 0.0) best = IDX(i, j + 1);
-                else best = IDX(i, j - 1);
-            }
-            s->solid[m] = best;
-            int bj = best / nx;
-            s->mat[m] = mask[best] ? 1 : (bj >= j_box ? 2 : 0);
+            for (int r = 1; r <= 4 && best < 0; r *= 2)
+                for (int b = -r; b <= r; b++)
+                    for (int a = -r; a <= r; a++) {
+                        int ci = si + a, cj = sj + b;
+                        if (ci < 0 || ci >= nx || cj < 0 || cj >= nz) continue;
+                        if (sub[IDX(ci, cj)] > 0.0) continue;
+                        double ex = ci + 0.5 - s->x[m], ez = cj + 0.5 - s->z[m];
+                        double dd = ex * ex + ez * ez;
+                        if (dd < bd) { bd = dd; best = IDX(ci, cj); }
+                    }
+            s->mat[m] = best < 0 ? 0 : mask[best] ? 1 : (best / nx >= j_box ? 2 : 0);
+            double h = sub[k] - phi[k];
+            s->h[m] = h > 0.02 * dx ? h : 0.0;
             cell2sp[k] = m;
         }
 }
@@ -354,7 +367,7 @@ static double ion_yield(double E, double A, double Eth) {
 }
 
 typedef struct {
-    double *G, *Gi, *theta, *keep, *film;   /* per surface point */
+    double *G, *Gi, *theta, *keep, *v;   /* per surface point */
 } State;
 
 static void state_size(State *st, int n) {
@@ -362,19 +375,17 @@ static void state_size(State *st, int n) {
     st->Gi = realloc(st->Gi, sizeof(double) * n);
     st->theta = realloc(st->theta, sizeof(double) * n);
     st->keep = realloc(st->keep, sizeof(double) * n);
-    st->film = realloc(st->film, sizeof(double) * n);
+    st->v = realloc(st->v, sizeof(double) * n);
 }
 
 /* the etch step's fluxes and silicon coverage on the current surface */
 static void etch_fluxes(const double *p, const Surf *s, const Views *v,
-                        const double *poly, const int *cell2sp, int nx, int nz,
-                        State *st) {
+                        const int *cell2sp, int nx, int nz, State *st) {
     int n = s->n;
     double Ysi = ion_yield(p[P_ESI], p[P_ASI], p[P_ETHSI]);
     for (int m = 0; m < n; m++) {
         st->Gi[m] = p[P_GIE] * v->ion[m];
         st->theta[m] = 1.0;
-        st->film[m] = poly[s->cell[m]];
     }
     /* the linear law (P_LSIA, P_LSIB > 0): F sticks on silicon with P_SF,
        no coverage */
@@ -382,7 +393,7 @@ static void etch_fluxes(const double *p, const Surf *s, const Views *v,
     for (int outer = 0; outer < 40; outer++) {
         for (int m = 0; m < n; m++) {
             double S;
-            if (st->film[m] > 0.0) S = p[P_SPOLY];
+            if (s->h[m] > 0.0) S = p[P_SPOLY];
             else if (s->mat[m] != 0) S = p[P_SMASK];
             else S = p[P_SF] * (linear ? 1.0 : 1.0 - st->theta[m]);
             st->keep[m] = 1.0 - S;
@@ -432,8 +443,26 @@ static double flat_etch(const double *p, double *theta) {
     return th * (0.25 * p[P_KTH] + Ysi * p[P_GIE]) / p[P_NSI];
 }
 
-void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
-              double dx, int j_box, const double *p, double *out) {
+/* the film's growth: the top moves into the void at V (um/s) */
+static void grow(double *top, const double *V, double *g, int nx, int nz,
+                 double dx, double dt) {
+    int n = nx * nz;
+    for (int k = 0; k < n; k++) top[k] = -top[k];
+    advect(top, V, g, nx, nz, dx, dt);
+    for (int k = 0; k < n; k++) top[k] = -top[k];
+}
+
+/* both level sets back to distance functions, the top over the substrate */
+static void redistance(double *top, double *sub, double *tmp, int nx, int nz,
+                       double dx) {
+    reinit(sub, tmp, nx, nz, dx, 2);
+    reinit(top, tmp, nx, nz, dx, 2);
+    for (int k = 0; k < nx * nz; k++)
+        if (top[k] > sub[k]) top[k] = sub[k];
+}
+
+static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
+                      double dx, int j_box, const double *p, double *out) {
     int n = nx * nz;
     int cycles = (int)p[P_CYCLES], nr = (int)p[P_NRAYS], ni = (int)p[P_NIONS];
     int stride = (int)p[P_REINIT] > 0 ? (int)p[P_REINIT] : 2;
@@ -443,7 +472,9 @@ void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
     double Ypoly = ion_yield(p[P_EE], kpoly, p[P_ETHION]);
     double Ymask = ion_yield(p[P_EE], kmask, p[P_ETHION]);
     double Ysi = ion_yield(p[P_ESI], p[P_ASI], p[P_ETHSI]);
-    double *poly = calloc(n, sizeof(double));      /* film thickness, m */
+    /* phi: the substrate (silicon, mask, stop layer); top: it and its film */
+    double *top = malloc(sizeof(double) * n);
+    memcpy(top, phi, sizeof(double) * n);
     double *V = calloc(n, sizeof(double)), *g = malloc(sizeof(double) * n);
     double *tmp = malloc(sizeof(double) * n);
     int *cell2sp = malloc(sizeof(int) * n), *band = malloc(sizeof(int) * n);
@@ -457,120 +488,155 @@ void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
     int sc = 0;
 
     for (int c = 0; c < cycles; c++) {
-        /* ---- passivation: the film grows where the CFx and ions arrive ---- */
-        find_surface(phi, mask, nx, nz, dx, j_box, &s, cell2sp);
-        views_compute(phi, &s, cell2sp, nx, nz, nr, ni, sigma, &v);
-        state_size(&st, s.n);
-        for (int m = 0; m < s.n; m++) st.keep[m] = 1.0 - p[P_SDEP];
-        radiosity(&v, s.n, st.keep, st.G, 0);
-        out[O_FLUXCALLS] += 1;
-        for (int m = 0; m < s.n; m++) st.Gi[m] = v.ion[m];
-        smooth_sp(&s, cell2sp, nx, nz, st.G, st.keep);
-        smooth_sp(&s, cell2sp, nx, nz, st.Gi, st.keep);
-        /* the film lies on each surface point's face: kept by its void
-         * interface cell (a face that does not move keeps it; the face of
-         * freshly etched silicon has none) */
-        for (int m = 0; m < s.n; m++)
-            poly[s.cell[m]] += (p[P_BDEP] * p[P_GCF] * st.G[m]
-                                + p[P_ADEP] * p[P_GIP] * st.Gi[m]) * p[P_TPASS];
-        if (c == 0) {
-            /* the film after the first step on the silicon that sees the
-             * most of the plasma */
-            double best = -1.0;
-            for (int m = 0; m < s.n; m++)
-                if (s.mat[m] == 0 && v.sky[m] > best) {
-                    best = v.sky[m];
-                    out[O_FILM0] = poly[s.cell[m]];
+        /* ---- passivation: the film grows where the CFx and ions arrive,
+         * its surface moving into the void ---- */
+        double t = 0.0, moved = 1e30, vmax = 0.0;
+        while (t < p[P_TPASS] - 1e-12) {
+            if (moved > 0.5 * dx) {
+                find_surface(top, phi, mask, nx, nz, dx, j_box, &s, cell2sp);
+                views_compute(top, &s, cell2sp, nx, nz, nr, ni, sigma, &v);
+                state_size(&st, s.n);
+                for (int m = 0; m < s.n; m++) st.keep[m] = 1.0 - p[P_SDEP];
+                radiosity(&v, s.n, st.keep, st.G, 0);
+                out[O_FLUXCALLS] += 1;
+                for (int m = 0; m < s.n; m++) st.Gi[m] = v.ion[m];
+                smooth_sp(&s, cell2sp, nx, nz, st.G, st.keep);
+                smooth_sp(&s, cell2sp, nx, nz, st.Gi, st.keep);
+                vmax = 0.0;
+                for (int m = 0; m < s.n; m++) {
+                    st.v[m] = (p[P_BDEP] * p[P_GCF] * st.G[m]
+                               + p[P_ADEP] * p[P_GIP] * st.Gi[m]) * 1e6;  /* um/s */
+                    vmax = dmax(vmax, st.v[m]);
                 }
+                label_all(cell2sp, nx, nz, band, queue);
+                moved = 0.0;
+            }
+            if (vmax <= 0.0) break;
+            double dt = dmin(p[P_TPASS] - t, p[P_CFL] * dx / vmax);
+            #pragma omp parallel for schedule(static)
+            for (int k = 0; k < n; k++) V[k] = band[k] >= 0 ? st.v[band[k]] : 0.0;
+            grow(top, V, g, nx, nz, dx, dt);
+            moved += vmax * dt;
+            if (++sc % stride == 0) redistance(top, phi, tmp, nx, nz, dx);
+            t += dt;
+            out[O_STEPS] += 1;
         }
 
-        /* ---- etch: ions clear the film, F and ions etch what is bare ---- */
-        double t = 0.0, moved = 1e30;
-        int bare_last = -1;
+        /* ---- etch: the ions and F wear the film down; where it is gone,
+         * they etch the substrate ---- */
+        t = 0.0, moved = 1e30;
+        int bare_last = -1, kclear = -1;
         while (t < p[P_TETCH] - 1e-12) {
             /* the fluxes again when the front has moved half a cell or the
              * film has cleared from a twentieth of the surface since */
             int bare = 0;
-            for (int m = 0; m < s.n && bare_last >= 0; m++)
-                bare += poly[s.cell[m]] <= 0.0;
+            if (bare_last >= 0) {
+                film_at(&s, top, phi, dx);
+                for (int m = 0; m < s.n; m++) bare += s.h[m] <= 0.0;
+            }
             if (moved > 0.5 * dx || bare_last < 0
                 || abs(bare - bare_last) > s.n / 20) {
-                find_surface(phi, mask, nx, nz, dx, j_box, &s, cell2sp);
-                views_compute(phi, &s, cell2sp, nx, nz, nr, ni, sigma, &v);
+                find_surface(top, phi, mask, nx, nz, dx, j_box, &s, cell2sp);
+                views_compute(top, &s, cell2sp, nx, nz, nr, ni, sigma, &v);
                 state_size(&st, s.n);
-                etch_fluxes(p, &s, &v, poly, cell2sp, nx, nz, &st);
+                etch_fluxes(p, &s, &v, cell2sp, nx, nz, &st);
                 out[O_FLUXCALLS] += 1;
                 moved = 0.0;
                 label_all(cell2sp, nx, nz, band, queue);
                 bare = 0;
-                for (int m = 0; m < s.n; m++) bare += poly[s.cell[m]] <= 0.0;
+                for (int m = 0; m < s.n; m++) bare += s.h[m] <= 0.0;
+                if (c == 0 && bare_last < 0) {
+                    /* the film after the first passivation step on the
+                     * silicon that sees the most of the plasma, and where
+                     * it is (for when it clears) */
+                    double best = -1.0;
+                    for (int m = 0; m < s.n; m++)
+                        if (s.mat[m] == 0 && v.sky[m] > best) {
+                            best = v.sky[m];
+                            out[O_FILM0] = s.h[m] * 1e-6;
+                            kclear = s.cell[m];
+                        }
+                }
                 bare_last = bare;
             }
-            /* the time step keeps every surface point, bare or about to be,
-             * within the CFL limit; a film that clears inside the step lets
-             * its surface etch for the rest of it */
-            double vpot = 0.0, tclear = 1e30;
-            double *frac = st.film;          /* reused: per surface point */
+            /* the film's removal rate on each point (st.v, m/s); the time
+             * step keeps every surface point, bare or about to be, within
+             * the CFL limit; a film that clears inside the step lets its
+             * surface etch for the rest of it */
+            double vpot = 0.0;
             for (int m = 0; m < s.n; m++) {
-                vpot = dmax(vpot, bare_rate(p, &st, m, s.mat[m], Ysi, Ymask));
-                double h = poly[s.cell[m]];
-                double strip = Ypoly * st.Gi[m] + p[P_BPOLY] * st.G[m];
-                if (h > 0.0 && strip > 0.0) tclear = dmin(tclear, h / strip);
+                st.v[m] = Ypoly * st.Gi[m] + p[P_BPOLY] * st.G[m];
+                vpot = dmax(vpot, dmax(st.v[m], bare_rate(p, &st, m, s.mat[m], Ysi, Ymask)));
+                vpot = dmax(vpot, bare_rate(p, &st, m, 0, Ysi, Ymask));
             }
             double dt = p[P_TETCH] - t;
             if (vpot > 0.0) dt = dmin(dt, p[P_CFL] * dxm / vpot);
-            for (int m = 0; m < s.n; m++) {
-                double h = poly[s.cell[m]];
-                double strip = Ypoly * st.Gi[m] + p[P_BPOLY] * st.G[m];
-                frac[m] = h <= 0.0 ? 1.0
-                        : strip > 0.0 ? dmax(0.0, 1.0 - h / (strip * dt)) : 0.0;
+            if (c == 0 && out[O_CLEAR0] < 0.0 && kclear >= 0 && band[kclear] >= 0) {
+                double h = (phi[kclear] - top[kclear]) * 1e-6, vp = st.v[band[kclear]];
+                if (h <= 0.02 * dxm) out[O_CLEAR0] = t;
+                else if (vp * dt >= h) out[O_CLEAR0] = t + h / vp;
             }
-            if (c == 0 && out[O_CLEAR0] < 0.0 && tclear <= dt)
-                out[O_CLEAR0] = t + tclear;
             double vapplied = 0.0;
             #pragma omp parallel for schedule(static) reduction(max:vapplied)
             for (int k = 0; k < n; k++) {
                 V[k] = 0.0;
                 int m = band[k];
                 if (m < 0) continue;
-                /* extended from the nearest surface point; a void cell with
-                 * that point's material (its own would give the void above
-                 * the mask silicon's speed) */
-                int i = k % nx, j = k / nx;
-                if (phi[k] > 0.0) {
-                    V[k] = frac[m] * bare_rate(p, &st, m, s.mat[m], Ysi, Ymask) * 1e6;  /* um/s */
-                } else {
-                    /* a solid cell with its own material, etched through any
-                     * of its faces that is bare: the etchant that undercuts
-                     * a protected wall from below reaches it */
-                    int mat = mask[k] ? 1 : (j >= j_box ? 2 : 0);
-                    double v = frac[m] * bare_rate(p, &st, m, mat, Ysi, Ymask);
-                    for (int b = -1; b <= 1; b++)
-                        for (int a = -1; a <= 1; a++) {
-                            int ci = i + a, cj = j + b;
-                            if (ci < 0 || ci >= nx || cj < 0 || cj >= nz) continue;
-                            int q = cell2sp[IDX(ci, cj)];
-                            if (q >= 0) v = dmax(v, frac[q] * bare_rate(p, &st, q, mat, Ysi, Ymask));
-                        }
-                    V[k] = v * 1e6;
-                }
+                /* the nearest surface point's film and fluxes; the substrate
+                 * under it, or a substrate cell's own material (the void
+                 * above the mask would otherwise take silicon's speed, or
+                 * the mask below silicon its) */
+                int mat = phi[k] > 0.0 ? s.mat[m]
+                        : mask[k] ? 1 : (k / nx >= j_box ? 2 : 0);
+                double vb = bare_rate(p, &st, m, mat, Ysi, Ymask);
+                double vp = st.v[m], h = s.h[m] * 1e-6, vel;
+                if (h <= 0.0) vel = vb;
+                else if (vp * dt > h) vel = (h + vb * (dt - h / vp)) / dt;
+                else vel = vp;
+                V[k] = vel * 1e6;                                     /* um/s */
                 if (V[k] > vapplied) vapplied = V[k];
             }
-            /* the ions and F wear the film down */
-            for (int m = 0; m < s.n; m++) {
-                int k = s.cell[m];
-                if (poly[k] > 0.0)
-                    poly[k] = dmax(0.0, poly[k] - (Ypoly * st.Gi[m] + p[P_BPOLY] * st.G[m]) * dt);
-            }
-            advect(phi, V, g, nx, nz, dx, dt);
+            advect(top, V, g, nx, nz, dx, dt);
+            /* the substrate the top has passed is etched */
+            #pragma omp parallel for schedule(static)
+            for (int k = 0; k < n; k++)
+                if (top[k] > phi[k]) phi[k] = top[k];
             moved += vapplied * dt;
-            if (++sc % stride == 0) reinit(phi, tmp, nx, nz, dx, 2);
+            if (++sc % stride == 0) redistance(top, phi, tmp, nx, nz, dx);
             t += dt;
             out[O_STEPS] += 1;
         }
     }
     reinit(phi, tmp, nx, nz, dx, 2);
-    free(poly); free(V); free(g); free(tmp); free(cell2sp); free(band); free(queue);
+    free(top); free(V); free(g); free(tmp); free(cell2sp); free(band);
+    free(queue);
     surf_free(&s); views_free(&v);
-    free(st.G); free(st.Gi); free(st.theta); free(st.keep); free(st.film);
+    free(st.G); free(st.Gi); free(st.theta); free(st.keep); free(st.v);
+}
+
+/* the grid with rows of void above it for the film on the mask's top (its
+ * thickest, on an open flat surface over the cycles, and three cells); the
+ * substrate is returned on the caller's grid */
+void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
+              double dx, int j_box, const double *p, double *out) {
+    double kpoly = p[P_APOLY] / dmax(1e-12, sqrt(p[P_EREF]) - sqrt(p[P_ETHION]));
+    double dep = (p[P_BDEP] * p[P_GCF] + p[P_ADEP] * p[P_GIP]) * p[P_TPASS];
+    double strip = (ion_yield(p[P_EE], kpoly, p[P_ETHION]) * p[P_GIE]
+                    + p[P_BPOLY] * p[P_GF]) * p[P_TETCH];
+    double h = 0.0, peak = 0.0;
+    for (int c = 0; c < (int)p[P_CYCLES]; c++) {
+        h += dep;
+        peak = dmax(peak, h);
+        h = dmax(0.0, h - strip);
+    }
+    int pad = (int)ceil(peak / (dx * 1e-6)) + 3, nz2 = nz + pad;
+    double *phi2 = malloc(sizeof(double) * nx * nz2);
+    unsigned char *mask2 = calloc((size_t)nx * nz2, 1);
+    for (int j = 0; j < pad; j++)
+        for (int i = 0; i < nx; i++) phi2[IDX(i, j)] = phi[i] + (pad - j) * dx;
+    memcpy(phi2 + (size_t)nx * pad, phi, sizeof(double) * nx * nz);
+    memcpy(mask2 + (size_t)nx * pad, mask, (size_t)nx * nz);
+    drie_core(phi2, mask2, nx, nz2, dx, j_box + pad, p, out);
+    memcpy(phi, phi2 + (size_t)nx * pad, sizeof(double) * nx * nz);
+    free(phi2); free(mask2);
 }
