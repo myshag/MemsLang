@@ -1,0 +1,34 @@
+# The etch step of the Bosch recipe of Zhang et al., Micromachines 14, 846 (2023) (soidlc.recipe_physics.ZHANG2023):
+# SF6 on an Oxford Plasmalab System 100 ICP180 with RF bias on the wafer's electrode, solved by Ferma's global model
+# (ferma_icp). The tool's drawings are not published: the source is taken as its name says, a tube of 180 mm inside
+# diameter (alumina, 5 mm) with a three-turn coil around its upper half, over a 150 mm wafer; the global model needs one
+# rectangular plasma, so the source and the chamber under it are one cylinder 15 cm high. The recipe's 5 sccm of C4F8
+# in this step are left out. The wafer is masked: one spiral trench 37.34 m long and 6 um wide on the 6-inch wafer, 1.3 % of
+# it open (only that share takes up F). soidlc overrides the parameters with -p (ferma build -p P_rf=700W ...).
+param R     = 9 cm                        # plasma (source tube) radius
+param H     = 15 cm                       # plasma height, the wafer at z = 0
+param t_w   = 5 mm                        # alumina wall
+param w     = 6 mm                        # turn cross-section
+param P_rf  = 700 W in 50 W .. 5 kW       # coil (generator) power
+param P_b   = 25 W in 1 W .. 300 W        # bias power on the wafer
+param p     = 40 mTorr in 5 mTorr .. 200 mTorr
+param q_sf6 = 100 sccm in 5 sccm .. 1 slm
+param f_open = 1.3 %                      # open share of the wafer
+let   rc    = R + t_w + 5 mm + w/2
+
+domain icp    = axisymmetric(r: 14 cm, z: 20 cm)
+region plasma = rect(size: [R, H], center: [R/2, H/2])
+region wall   = rect(size: [t_w, H/2], center: [R + t_w/2, 3*H/4])
+region coil1  = rect(size: [w, w], center: [rc, 9 cm])
+region coil2  = rect(size: [w, w], center: [rc, 11 cm])
+region coil3  = rect(size: [w, w], center: [rc, 13 cm])
+
+mesh base   = settings(size: 2 mm, order: 1)
+mesh turns1 = refine(on: coil1, size: 0.5 mm)
+mesh turns2 = refine(on: coil2, size: 0.5 mm)
+mesh turns3 = refine(on: coil3, size: 0.5 mm)
+
+material etch = gas(name: "sf6", pressure: p, temperature: 315 K, feed: [flow("SF6", q_sf6)])
+load     rf   = coil(on: [coil1, coil2, coil3], power: P_rf, resistance: 0.5 ohm)
+analysis run  = discharge(on: plasma, gas: etch, model: "global", wafer_diameter: 150 mm,
+                         wafer_open_fraction: f_open, bias_power: P_b, bias_frequency: 13.56 MHz)

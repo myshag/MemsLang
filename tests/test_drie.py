@@ -6,7 +6,11 @@ the plasma's own rate, a passivation step leaves the film its fluxes deposit,
 the etch step cannot etch before the ions have worn that film through, the
 mask recedes at its own rate; and the transport's physics: a narrow trench
 starves of F (RIE lag) and keeps less of the film at its bottom.  The
-reference plasmas are Ferma's (tests/data, trimmed ferma_icp summaries).
+reference is the published recipe of Zhang et al., Micromachines 14, 846
+(2023) (recipe_physics.ZHANG2023): its plasmas are Ferma's for an Oxford
+ICP180-like reactor with 1.3 % of the wafer open (tests/data, trimmed
+ferma_icp summaries), and its measured depth checks the model with its one
+fitted constant.
 """
 import json
 import math
@@ -17,6 +21,7 @@ from dataclasses import replace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from soidlc import etch, plasma                           # noqa: E402
+from soidlc.recipe_physics import ZHANG2023, ZHANG2023_MEASURED  # noqa: E402
 
 _DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
@@ -27,11 +32,12 @@ def _summary(step):
 
 
 def _reference(**kw):
-    """The reference recipe's fluxes (Ferma: 600 W, 30 mTorr, 130 sccm SF6
-    with 15 W of bias, 100 sccm C4F8)."""
+    """The fluxes of Zhang et al.'s recipe (Ferma: 700 W; 40 mTorr, 100 sccm
+    SF6, 25 W of bias, 8 s; 30 mTorr, 100 sccm C4F8, 10 s)."""
+    kw = {"t_etch": ZHANG2023["t_etch"], "t_pass": ZHANG2023["t_pass"], **kw}
     return etch.BoschFluxes.from_plasmas(
-        plasma.etch_plasma(_summary("bosch_etch")),
-        plasma.passivation_plasma(_summary("bosch_passivation")), **kw)
+        plasma.etch_plasma(_summary("icp180_etch")),
+        plasma.passivation_plasma(_summary("icp180_passivation")), **kw)
 
 
 def _surface_at(r, x):
@@ -58,13 +64,13 @@ def _etch(fluxes, openings=((5.0, 45.0),), width=50.0, depth=4.0, dx=0.05,
 
 class TestFermaConsistency(unittest.TestCase):
     def test_open_wafer_etches_at_the_plasmas_rate(self):
-        e = plasma.etch_plasma(_summary("bosch_etch"))
+        e = plasma.etch_plasma(_summary("icp180_etch"))
         f = _reference()
         self.assertAlmostEqual(f.flat_etch_rate() / e.etch_rate, 1.0, places=9)
-        # the F flux the wafer's coverage implies is below the reported
-        # chamber flux: the etching depletes F at the wafer
-        self.assertLess(f.f_flux, e.f_flux)
+        # the F flux the wafer's coverage implies is the transport model's at
+        # the wafer, not the chamber's reported one; of the same order
         self.assertGreater(f.f_flux, 0.5 * e.f_flux)
+        self.assertLess(f.f_flux, 3.0 * e.f_flux)
 
     def test_flat_surface_without_film(self):
         f = _reference(t_pass=0.0, t_etch=3.0, cycles=1)
@@ -84,10 +90,11 @@ class TestFilm(unittest.TestCase):
                                delta=0.03)
 
     def test_no_etch_before_breakthrough(self):
-        # the reference recipe as published: the film the passivation step
-        # leaves (~87 nm) takes the ions ~14 s, twice the etch step
+        # with the published film growth (Kokkoris et al.) the passivation
+        # step leaves ~190 nm, which takes the ions ~17 s: twice the 8 s etch
+        # step, and nothing etches
         f = _reference(cycles=1)
-        self.assertGreater(f.breakthrough(), 10.0)
+        self.assertGreater(f.breakthrough(), 2 * f.t_etch)
         r = _etch(f)
         self.assertLess(abs(_surface_at(r, 25.0)), 0.01)
 
@@ -103,13 +110,14 @@ class TestFilm(unittest.TestCase):
 class TestTransport(unittest.TestCase):
     def test_rie_lag(self):
         # without the film F limits the etch: a 1 um trench etches slower
-        # than a 10 um one once it is a few widths deep
+        # than a 10 um one once it is a few widths deep (with this recipe's
+        # F-rich plasma, by some 6 %)
         f = _reference(cycles=12, t_etch=7.0, t_pass=0.0)
         r = _etch(f, openings=((4.0, 5.0), (12.0, 22.0)), width=26.0,
-                  depth=6.0, mask=1.0)
+                  depth=7.0, mask=1.0)
         narrow, wide = r.depths
         self.assertGreater(narrow, 1.0)
-        self.assertLess(narrow, 0.9 * wide, r.depths)
+        self.assertLess(narrow, 0.97 * wide, r.depths)
 
     def test_less_film_at_the_bottom_of_a_narrow_trench(self):
         # the CFx come from above: a slot's bottom sees less of the plasma
@@ -144,6 +152,28 @@ class TestTransport(unittest.TestCase):
     def test_report(self):
         r = _etch(_reference(cycles=1).calibrated(1.0))
         self.assertTrue(any("from the plasma's fluxes" in s for s in r.report()))
+
+
+class TestZhang2023(unittest.TestCase):
+    """The published recipe against its measurement: 100 cycles etch a 6 um
+    trench under 6 um of AZ4620 to 30.72 um.  The film's growth is the one
+    fitted constant: a breakthrough of 4.15 s.  The scallops (70 - 80 nm
+    measured) need a finer grid than a test can afford (see the README)."""
+
+    def test_depth_after_100_cycles(self):
+        m = ZHANG2023_MEASURED
+        f = _reference(cycles=m["cycles"]).calibrated(4.15)
+        r = etch.simulate([(10.0, 16.0)], domain_w=26.0, depth=40.0, dx=0.1,
+                          fluxes=f, box_at=40.0, mask_thick=6.0)
+        self.assertAlmostEqual(r.depths[0] / m["depth_um"], 1.0, delta=0.03)
+        self.assertAlmostEqual(r.widths[0], m["width_um"], delta=0.3)
+
+    def test_open_silicon_etches_faster_than_a_bare_wafer(self):
+        # the plasma's own numbers: 1.3 % of the wafer open
+        e = plasma.etch_plasma(_summary("icp180_etch"))
+        self.assertAlmostEqual(_summary("icp180_etch")["wafer"]["open_fraction"],
+                               0.013)
+        self.assertAlmostEqual(e.etch_rate * 6e7, 3.9, delta=0.05)   # um/min
 
 
 class TestCalibration(unittest.TestCase):

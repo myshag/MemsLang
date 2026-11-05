@@ -387,30 +387,52 @@ practical):
   on disk with `FermaPlasma(cache_dir=...)`).
 - **Bosch DRIE from the plasma's fluxes** (`drie.c`; `etch.simulate(...,
   fluxes=BoschProcess(plasma=FermaPlasma()).fluxes())`) — the profile from what
-  the two steps' plasmas deliver, with no effective knobs: F, the ions (their
+  the two steps' plasmas deliver, with no effective knobs. F, the ions (their
   flux and energy) and the film-forming CF/CF₂/CF₃ fly ballistically into the
-  feature from the plasma above (rays from every surface point; the neutrals
-  re-emitted diffusely where they do not stick, a radiosity system solved with
-  BiCGSTAB; the ions within a 2° spread). The passivation step grows a
-  fluorocarbon film from the CFx and ions that arrive; the etch step's ions
-  and F wear it down, and where it is gone silicon is etched through adsorbed F
-  as on Ferma's wafer (Belen et al., JVST A 23, 99 (2005): F sticking,
-  thermal and ion-enhanced removal) and the mask by the ions and F. The film's
-  and the mask's coefficients are the published set of Kokkoris et al., JVST A
-  22, 1896 (2004) (as in Ertl & Selberherr 2010 and ViennaPS's Bosch example).
-  RIE lag, the film's thinning at a slot's bottom, scallops, mask erosion
-  follow from the transport. `BoschFluxes.from_plasmas` takes the F flux and
-  silicon's ion term that give the plasma's own etch rate and ion-driven share,
-  so an open flat surface etches exactly as Ferma's wafer. One constant is the
-  tool's: the film's growth per CFx (the published value is another reactor's)
-  is set by `BoschFluxes.calibrated(breakthrough)`, the seconds the etch step
-  takes to clear one passivation step's film off an open surface. With the
-  published value and Ferma's fluxes the reference recipe's film (87 nm) would
-  take 14 s against a 7 s step and nothing would etch. Not modelled yet: the
-  wafer's open fraction in Ferma (its wafer is all open silicon, which depletes
-  F: 1.5 µm/min), the steps' gas switching in time, ion reflection and
-  charging, the fluorocarbon's own etching chemistry beyond the published
-  yields.
+  feature from the plasma above: rays from every surface point, the neutrals
+  re-emitted diffusely where they do not stick (a radiosity system solved with
+  BiCGSTAB), the ions within a 2° spread. The passivation step grows a
+  fluorocarbon film on every face from the CFx and ions that arrive; the etch
+  step's ions and F wear it down; where it is gone, silicon is etched through
+  adsorbed F as on Ferma's wafer (Belen et al., JVST A 23, 99 (2005): F
+  sticking, thermal and ion-enhanced removal), and a solid cell is etched
+  through any bare face, so the etchant undercuts a protected wall from below
+  (scallops). The mask is worn by the ions and F. The film's and the mask's
+  coefficients are the published set of Kokkoris et al., JVST A 22, 1896 (2004)
+  (as in Ertl & Selberherr 2010 and ViennaPS's Bosch example).
+  `BoschFluxes.from_plasmas` takes the F flux and silicon's ion term that give
+  the plasma's own etch rate and ion-driven share, so an open flat surface
+  etches exactly as Ferma's wafer. One constant is the tool's: the film's
+  growth per CFx (the published one is another reactor's), set by
+  `BoschFluxes.calibrated(breakthrough)`, the seconds the etch step takes to
+  clear one passivation step's film off an open surface. The front's speed is
+  grid-independent (a flat surface to 1e-3, a 2 µm trench to 1 % from 40 to
+  10 nm cells).
+
+  **Against a published recipe** (`recipe_physics.ZHANG2023`, `zhang2023()`):
+  Zhang et al., Micromachines 14, 846 (2023), an Oxford Plasmalab 100 ICP180,
+  700 W; 8 s of SF₆ at 40 mTorr with 25 W of bias, 10 s of C₄F₈ at 30 mTorr;
+  a 6 µm spiral trench under 6 µm of AZ4620, 1.3 % of the 6-inch wafer open.
+  Its plasmas are Ferma's for an ICP180-like reactor (`reactors/icp180_*.ferma`:
+  the tool's drawings are not published, so the source is a 180 mm tube with a
+  three-turn coil; needs Ferma's `wafer_open_fraction`): the open silicon etches
+  at 3.9 µm/min (a bare wafer would take up the F: 1.5). With the published
+  film growth the film (190 nm) would take 17 s to clear against an 8 s step,
+  and nothing would etch; a breakthrough of 4.15 s fits the depth:
+
+  | | model | measured |
+  |---|---|---|
+  | depth after 100 cycles (fitted) | 30.7 µm | 30.72 µm |
+  | advance per cycle, first 12 cycles | 295 nm | 307 nm (mean of 100) |
+  | width | 6.0 µm | 6 µm |
+  | scallops (peak to valley, 10 to 25 nm cells) | 30 - 55 nm | 70 - 80 nm |
+
+  The scallops are half the measured, and the wall steps inward by about
+  0.1 µm every few cycles where the bowl's rounded corner keeps its film (the
+  ions strip it per unit area as cos θ; their reflection and the polymer's
+  angular yield are not modelled). Not modelled either: the steps' gas
+  switching in time, charging, the 5 sccm admixtures and the passivation
+  step's bias of the recipe.
 - **Anisotropic wet etch** (`koh.py`) — KOH/TMAH bulk micromachining with an
   orientation-dependent rate: {111} planes ~100× slower meet a (100) surface at
   54.74°, so a mask opening self-organises into the classic facetted pit /

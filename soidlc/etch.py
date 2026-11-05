@@ -388,7 +388,8 @@ def _measure(res: EtchResult, j0: int, mask_thick: float):
         res.tapers.append(_taper(res, j0, ic, jdeep))
     # scallop and footing measured on the deepest (best-resolved) trench
     kd = max(range(len(res.depths)), key=lambda k: res.depths[k])
-    res.scallop_um = _scallop(res, j0, kd)
+    res.scallop_um = _scallop(res, j0, kd,
+                              res.fluxes.cycles if res.fluxes is not None else None)
     res.footing_um = _footing(res, j0, kd)
 
 
@@ -442,10 +443,19 @@ def _wall_trace(res, j0, k):
     return js, xs
 
 
-def _scallop(res, j0, k):
-    """Sidewall ripple = RMS of the wall position after removing the linear
-    taper (so taper/bow is not counted as scalloping)."""
+def _scallop(res, j0, k, cycles=None):
+    """Sidewall ripple of the wall after removing its linear taper (so
+    taper/bow is not counted as scalloping), over the middle 70 % of the
+    depth: the undercut under the mask at the top and the bottom's rounding
+    are not scallops.  With the number of cycles known (the flux-driven
+    model), the median of the peak-to-valley within each cycle's advance --
+    a scallop's depth; else twice the RMS of the ripple."""
     js, xs = _wall_trace(res, j0, k)
+    if js:
+        top, bottom = js[0], js[-1]
+        keep = [(j, x) for j, x in zip(js, xs)
+                if top + 0.15 * (bottom - top) <= j <= bottom - 0.15 * (bottom - top)]
+        js, xs = [j for j, _ in keep], [x for _, x in keep]
     n = len(xs)
     if n < 6:
         return 0.0
@@ -453,7 +463,19 @@ def _scallop(res, j0, k):
     sjj = sum((j - mj) ** 2 for j in js) or 1.0
     b = sum((j - mj) * (x - mx) for j, x in zip(js, xs)) / sjj
     a = mx - b * mj
-    rms = math.sqrt(sum((x - (a + b * j)) ** 2 for j, x in zip(js, xs)) / n)
+    resid = [x - (a + b * j) for j, x in zip(js, xs)]
+    if cycles:
+        period = res.depths[k] / res.dx / cycles   # rows per cycle
+        if period >= 2:
+            pp, start = [], js[0]
+            while start + period <= js[-1] + 1e-9:
+                w = [r for j, r in zip(js, resid) if start <= j < start + period]
+                if len(w) > 1:
+                    pp.append(max(w) - min(w))
+                start += period
+            if pp:
+                return sorted(pp)[len(pp) // 2]
+    rms = math.sqrt(sum(r * r for r in resid) / n)
     return 2.0 * rms
 
 

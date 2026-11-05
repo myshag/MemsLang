@@ -38,6 +38,9 @@ from typing import Dict, Optional, Tuple
 _REACTORS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reactors")
 ETCH_REACTOR = os.path.join(_REACTORS, "bosch_etch.ferma")
 PASSIVATION_REACTOR = os.path.join(_REACTORS, "bosch_passivation.ferma")
+# the Oxford Plasmalab System 100 ICP180 of recipe_physics.ZHANG2023
+ICP180_ETCH = os.path.join(_REACTORS, "icp180_etch.ferma")
+ICP180_PASSIVATION = os.path.join(_REACTORS, "icp180_passivation.ferma")
 
 # the fluorocarbon radicals that build the passivation film
 _FILM_RADICALS = ("CF", "CF2", "CF3")

@@ -66,6 +66,8 @@ class BoschProcess:
     cycles: int = 40
     open_fraction: float = 0.1   # fraction of wafer open (loading)
     cal: Calibration = field(default_factory=Calibration)
+    # chamber pressure of the passivation step, mTorr, where it differs
+    pass_pressure: Optional[float] = None
     # a soidlc.plasma.FermaPlasma (or anything with its etch/passivation
     # methods): the drive terms from the steps' plasmas, not the power laws
     plasma: Optional[object] = field(default=None, repr=False, compare=False)
@@ -86,7 +88,7 @@ class BoschProcess:
         reference recipe (needs ``plasma``)."""
         pl = self.plasma
         return (pl.etch(self.coil_w, self.pressure, self.sf6, self.bias_w),
-                pl.passivation(self.coil_w, self.pressure, self.c4f8),
+                pl.passivation(self.coil_w, self._pass_pressure(), self.c4f8),
                 pl.etch(_COIL0, _PRES0, _SF6_0, _BIAS0),
                 pl.passivation(_COIL0, _PRES0, _C4F8_0))
 
@@ -102,8 +104,11 @@ class BoschProcess:
         pl = self.plasma
         return BoschFluxes.from_plasmas(
             pl.etch(self.coil_w, self.pressure, self.sf6, self.bias_w),
-            pl.passivation(self.coil_w, self.pressure, self.c4f8),
+            pl.passivation(self.coil_w, self._pass_pressure(), self.c4f8),
             t_etch=self.t_etch, t_pass=self.t_pass, cycles=self.cycles, **kw)
+
+    def _pass_pressure(self) -> float:
+        return self.pressure if self.pass_pressure is None else self.pass_pressure
 
     def _drivers(self) -> Dict[str, float]:
         """The drive terms of the recipe relative to the reference recipe's:
@@ -212,3 +217,27 @@ class BoschProcess:
                 "%.3g m^-2 s^-1" % (d.ne, d.te, d.film_flux))
         out += ["recipe: WARNING: " + m for m in w]
         return out
+
+
+# A published Bosch recipe with its measured result: Zhang, Wu, Sun, Shen, Lan,
+# Guo, Shen & Wang, "Inductively Coupled Plasma Dry Etching of Silicon Deep
+# Trenches with Extremely Vertical Smooth Sidewalls Used in Micro-Optical
+# Gyroscopes", Micromachines 14, 846 (2023), table 1 and section 3.1: an Oxford
+# Plasmalab System 100 ICP180, the electrode at 10 C, AZ4620 photoresist; the
+# etch step also feeds 5 sccm of C4F8 and the passivation step 5 sccm of SF6
+# and 10 W of bias (left out here).  Its plasma: FermaPlasma with
+# plasma.ICP180_ETCH and plasma.ICP180_PASSIVATION.
+ZHANG2023 = dict(t_etch=8.0, t_pass=10.0, sf6=100.0, c4f8=100.0,
+                 pressure=40.0, pass_pressure=30.0, coil_w=700.0, bias_w=25.0,
+                 cycles=100)
+# what they measured: a spiral trench 6 um wide (37.34 m long on a 6-inch
+# wafer, 1.3 % of it) under 6 um of AZ4620, 30.72 um deep after 100 cycles
+# (30 min: 1.02 um/min, 0.307 um per cycle), scallops 70 - 80 nm
+ZHANG2023_MEASURED = dict(width_um=6.0, mask_um=6.0, open_fraction=0.013,
+                          cycles=100, depth_um=30.72, scallop_nm=(70.0, 80.0))
+
+
+def zhang2023(**kw) -> BoschProcess:
+    """The recipe of Zhang et al. 2023 (``ZHANG2023``) as a BoschProcess;
+    ``kw`` overrides its fields (``plasma=FermaPlasma(...)``, ``cycles``)."""
+    return BoschProcess(**{**ZHANG2023, **kw})

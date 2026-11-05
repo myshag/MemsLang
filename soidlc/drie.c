@@ -26,9 +26,10 @@
  *     Eng. 87, 20 (2010)): deposited by the passivation step, betaDep per CFx and
  *     alphaDep per ion that arrive; removed in the etch step, alphaPoly per ion
  *     and betaPoly per F; silicon and the mask etch only where it is gone.  Its
- *     thickness is sub-cell, carried by the solid cell under each surface
- *     point: a wall that does not move keeps it, freshly etched silicon has
- *     none;
+ *     thickness is sub-cell, carried by each surface point's face (its void
+ *     interface cell): a wall that does not move keeps it, freshly etched
+ *     silicon has none, and a solid cell is etched through any bare face (the
+ *     etchant undercutting a protected wall from below reaches it);
  *   - the mask: alphaMask per ion, betaMask per F.
  *   The ion yields of the film and the mask scale as sqrt(E) - sqrt(EthIon),
  *   equal to the published ones at Eref.  Silicon's yield takes its own energy
@@ -39,8 +40,8 @@
  * fluxes are averaged with their neighbours' along the surface (the rays'
  * sampling noise would roughen the front), recomputed when the front has moved
  * half a cell or the film has cleared from a twentieth of the surface.  The
- * velocity is that of the nearest surface point, with its material, over ten
- * cells each side of the front, and the step keeps every surface point within
+ * velocity is that of the nearest surface point, with its material, over the
+ * whole grid (label_all), and the step keeps every surface point within
  * the CFL limit; a film that clears within a step lets its surface etch for
  * the rest of it.
  *
@@ -325,6 +326,29 @@ static void smooth_sp(const Surf *s, const int *cell2sp, int nx, int nz,
     memcpy(a, tmp, sizeof(double) * s->n);
 }
 
+/* every cell's surface point for the velocity: the interface cells' own, the
+ * others' through a breadth-first sweep from them (the nearest along the grid).
+ * The whole grid gets a velocity: a band leaves stale values at its edge, and
+ * on the void side the upwind gradient carries their deficit down to the front,
+ * a cell per step (a flat front lost a quarter of its speed on a 10 nm grid) */
+static void label_all(const int *cell2sp, int nx, int nz, int *label, int *queue) {
+    int n = nx * nz, head = 0, tail = 0;
+    for (int k = 0; k < n; k++) {
+        label[k] = cell2sp[k];
+        if (label[k] >= 0) queue[tail++] = k;
+    }
+    while (head < tail) {
+        int k = queue[head++], i = k % nx, j = k / nx;
+        int nb[4] = { i > 0 ? k - 1 : -1, i < nx - 1 ? k + 1 : -1,
+                      j > 0 ? k - nx : -1, j < nz - 1 ? k + nx : -1 };
+        for (int q = 0; q < 4; q++)
+            if (nb[q] >= 0 && label[nb[q]] < 0) {
+                label[nb[q]] = label[k];
+                queue[tail++] = nb[q];
+            }
+    }
+}
+
 static double ion_yield(double E, double A, double Eth) {
     return E > Eth ? A * (sqrt(E) - sqrt(Eth)) : 0.0;
 }
@@ -350,7 +374,7 @@ static void etch_fluxes(const double *p, const Surf *s, const Views *v,
     for (int m = 0; m < n; m++) {
         st->Gi[m] = p[P_GIE] * v->ion[m];
         st->theta[m] = 1.0;
-        st->film[m] = poly[s->solid[m]];
+        st->film[m] = poly[s->cell[m]];
     }
     for (int outer = 0; outer < 40; outer++) {
         for (int m = 0; m < n; m++) {
@@ -414,6 +438,7 @@ void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
     double *V = calloc(n, sizeof(double)), *g = malloc(sizeof(double) * n);
     double *tmp = malloc(sizeof(double) * n);
     int *cell2sp = malloc(sizeof(int) * n), *band = malloc(sizeof(int) * n);
+    int *queue = malloc(sizeof(int) * n);
     Surf s = {0};
     Views v = {0};
     State st = {0};
@@ -433,15 +458,12 @@ void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
         for (int m = 0; m < s.n; m++) st.Gi[m] = v.ion[m];
         smooth_sp(&s, cell2sp, nx, nz, st.G, st.keep);
         smooth_sp(&s, cell2sp, nx, nz, st.Gi, st.keep);
-        /* the film lies on the solid cell under each surface point (where
-         * two points share one, the thicker deposit) */
-        for (int m = 0; m < s.n; m++) tmp[s.solid[m]] = poly[s.solid[m]];
-        for (int m = 0; m < s.n; m++) {
-            double rate = p[P_BDEP] * p[P_GCF] * st.G[m]
-                          + p[P_ADEP] * p[P_GIP] * st.Gi[m];
-            int k = s.solid[m];
-            poly[k] = dmax(poly[k], tmp[k] + rate * p[P_TPASS]);
-        }
+        /* the film lies on each surface point's face: kept by its void
+         * interface cell (a face that does not move keeps it; the face of
+         * freshly etched silicon has none) */
+        for (int m = 0; m < s.n; m++)
+            poly[s.cell[m]] += (p[P_BDEP] * p[P_GCF] * st.G[m]
+                                + p[P_ADEP] * p[P_GIP] * st.Gi[m]) * p[P_TPASS];
         if (c == 0) {
             /* the film after the first step on the silicon that sees the
              * most of the plasma */
@@ -449,7 +471,7 @@ void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
             for (int m = 0; m < s.n; m++)
                 if (s.mat[m] == 0 && v.sky[m] > best) {
                     best = v.sky[m];
-                    out[O_FILM0] = poly[s.solid[m]];
+                    out[O_FILM0] = poly[s.cell[m]];
                 }
         }
 
@@ -461,7 +483,7 @@ void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
              * film has cleared from a twentieth of the surface since */
             int bare = 0;
             for (int m = 0; m < s.n && bare_last >= 0; m++)
-                bare += poly[s.solid[m]] <= 0.0;
+                bare += poly[s.cell[m]] <= 0.0;
             if (moved > 0.5 * dx || bare_last < 0
                 || abs(bare - bare_last) > s.n / 20) {
                 find_surface(phi, mask, nx, nz, dx, j_box, &s, cell2sp);
@@ -470,25 +492,9 @@ void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
                 etch_fluxes(p, &s, &v, poly, cell2sp, nx, nz, &st);
                 out[O_FLUXCALLS] += 1;
                 moved = 0.0;
-                #pragma omp parallel for schedule(static)
-                for (int k = 0; k < n; k++) {
-                    /* the velocity is extended over ten cells each side:
-                     * a narrower band leaves stale level-set values at its
-                     * edge that hold the front back (a flat front moved at
-                     * three quarters of its speed with three cells) */
-                    band[k] = -1;
-                    if (fabs(phi[k]) > 10.0 * dx) continue;
-                    int i = k % nx, j = k / nx;
-                    double ux, uz;
-                    normal_at(phi, nx, nz, i, j, &ux, &uz);
-                    double d = phi[k] / dx;
-                    double px = i + 0.5 - d * ux, pz = j + 0.5 - d * uz;
-                    band[k] = nearest_sp(&s, cell2sp, nx, nz, px, pz, 3);
-                    if (band[k] < 0)
-                        band[k] = nearest_sp(&s, cell2sp, nx, nz, px, pz, 8);
-                }
+                label_all(cell2sp, nx, nz, band, queue);
                 bare = 0;
-                for (int m = 0; m < s.n; m++) bare += poly[s.solid[m]] <= 0.0;
+                for (int m = 0; m < s.n; m++) bare += poly[s.cell[m]] <= 0.0;
                 bare_last = bare;
             }
             /* the time step keeps every surface point, bare or about to be,
@@ -498,14 +504,14 @@ void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
             double *frac = st.film;          /* reused: per surface point */
             for (int m = 0; m < s.n; m++) {
                 vpot = dmax(vpot, bare_rate(p, &st, m, s.mat[m], Ysi, Ymask));
-                double h = poly[s.solid[m]];
+                double h = poly[s.cell[m]];
                 double strip = Ypoly * st.Gi[m] + p[P_BPOLY] * st.G[m];
                 if (h > 0.0 && strip > 0.0) tclear = dmin(tclear, h / strip);
             }
             double dt = p[P_TETCH] - t;
             if (vpot > 0.0) dt = dmin(dt, p[P_CFL] * dxm / vpot);
             for (int m = 0; m < s.n; m++) {
-                double h = poly[s.solid[m]];
+                double h = poly[s.cell[m]];
                 double strip = Ypoly * st.Gi[m] + p[P_BPOLY] * st.G[m];
                 frac[m] = h <= 0.0 ? 1.0
                         : strip > 0.0 ? dmax(0.0, 1.0 - h / (strip * dt)) : 0.0;
@@ -518,21 +524,34 @@ void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
                 V[k] = 0.0;
                 int m = band[k];
                 if (m < 0) continue;
-                /* extended from the surface point, with its material: a
-                 * cell's own material would give the void above the mask
-                 * silicon's speed */
-                V[k] = frac[m] * bare_rate(p, &st, m, s.mat[m], Ysi, Ymask) * 1e6;  /* um/s */
+                /* extended from the nearest surface point; a void cell with
+                 * that point's material (its own would give the void above
+                 * the mask silicon's speed) */
+                int i = k % nx, j = k / nx;
+                if (phi[k] > 0.0) {
+                    V[k] = frac[m] * bare_rate(p, &st, m, s.mat[m], Ysi, Ymask) * 1e6;  /* um/s */
+                } else {
+                    /* a solid cell with its own material, etched through any
+                     * of its faces that is bare: the etchant that undercuts
+                     * a protected wall from below reaches it */
+                    int mat = mask[k] ? 1 : (j >= j_box ? 2 : 0);
+                    double v = frac[m] * bare_rate(p, &st, m, mat, Ysi, Ymask);
+                    for (int b = -1; b <= 1; b++)
+                        for (int a = -1; a <= 1; a++) {
+                            int ci = i + a, cj = j + b;
+                            if (ci < 0 || ci >= nx || cj < 0 || cj >= nz) continue;
+                            int q = cell2sp[IDX(ci, cj)];
+                            if (q >= 0) v = dmax(v, frac[q] * bare_rate(p, &st, q, mat, Ysi, Ymask));
+                        }
+                    V[k] = v * 1e6;
+                }
                 if (V[k] > vapplied) vapplied = V[k];
             }
-            /* the ions and F wear the film down (where two surface points
-             * share its cell, the faster) */
-            for (int m = 0; m < s.n; m++) tmp[s.solid[m]] = 0.0;
-            for (int m = 0; m < s.n; m++)
-                tmp[s.solid[m]] = dmax(tmp[s.solid[m]],
-                                       Ypoly * st.Gi[m] + p[P_BPOLY] * st.G[m]);
+            /* the ions and F wear the film down */
             for (int m = 0; m < s.n; m++) {
-                int k = s.solid[m];
-                if (poly[k] > 0.0) poly[k] = dmax(0.0, poly[k] - tmp[k] * dt);
+                int k = s.cell[m];
+                if (poly[k] > 0.0)
+                    poly[k] = dmax(0.0, poly[k] - (Ypoly * st.Gi[m] + p[P_BPOLY] * st.G[m]) * dt);
             }
             advect(phi, V, g, nx, nz, dx, dt);
             moved += vapplied * dt;
@@ -542,7 +561,7 @@ void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
         }
     }
     reinit(phi, tmp, nx, nz, dx, 2);
-    free(poly); free(V); free(g); free(tmp); free(cell2sp); free(band);
+    free(poly); free(V); free(g); free(tmp); free(cell2sp); free(band); free(queue);
     surf_free(&s); views_free(&v);
     free(st.G); free(st.Gi); free(st.theta); free(st.keep); free(st.film);
 }
