@@ -428,9 +428,10 @@ practical):
   | depth after 100 cycles (fitted) | 30.7 µm | 30.72 µm |
   | advance per cycle, first 12 cycles | 312 nm | 307 nm (mean of 100) |
   | width | 6.0 µm | 6 µm |
-  | scallops (peak to valley, 10 to 25 nm cells) | 30 - 55 nm | 70 - 80 nm |
+  | scallops (peak to valley, 25 nm cells) | 32 nm | 70 - 80 nm |
 
-  The scallops are half the measured, and the wall steps inward by about
+  The scallops are under half the measured (the ten times faster thermal
+  etching has not deepened them), and the wall steps inward by about
   0.1 µm every few cycles where the bowl's rounded corner keeps its film (the
   ions strip it per unit area as cos θ; their reflection and the polymer's
   angular yield are not modelled). Not modelled either: the steps' gas
