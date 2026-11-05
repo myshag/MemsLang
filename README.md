@@ -401,7 +401,14 @@ practical):
   removal; the thermal removal ten times theirs, as Ferma's, from the
   unbiased etch rate of Tinck et al., Plasma Process. Polym. 14, e1700018
   (2017)), undercutting the film above (scallops). The mask is worn by the
-  ions and F.
+  ions and F. A bias on the passivation step (`BoschProcess.pass_bias_w`, or
+  the measured self-bias `pass_bias_v`; Ferma gives the ions' energy) makes
+  its ions wear the film down as well, with the film's yield at their
+  energy, where they reach it (the open surface and the bottom, not the
+  walls): where they take more than the radicals bring, the film thins, down
+  to the substrate. The reactors carry each step's bias as `P_b` or `V_b`,
+  0 for none (needs Ferma #129: 0 as no bias, and the sheath over a wafer
+  without a chemistry of its own, as under C₄F₈).
 
   The film's radicals are Ferma's species, each with the probability that
   one arriving at the film joins it, measured where there are measurements
@@ -461,7 +468,13 @@ practical):
   0 leaves the walls deep down unprotected (the trench bows to 10 µm wider),
   at 1.5e-3 it narrows to 3.6 µm, and 5e-4 keeps it straight (fig. 4b shows
   5.9 µm at its bottom). Not modelled: the steps' gas switching in time,
-  charging, the 5 sccm admixtures and the passivation step's 10 W of bias.
+  charging and the 5 sccm admixtures. The passivation step's 10 W of bias is
+  left out of the table: with it (`pass_bias_w=10`; Ferma's sheath, 198 V,
+  the ions at 200 eV wearing off 3.8 of the radicals' 11.7 nm/s) a
+  breakthrough of 7.45 s fits the depth (30.8 µm), but the film's growth has
+  to be 1.43 times higher to make up for the ions, the walls (which no ions
+  reach) get that much more, and the trench narrows: 5.6 / 5.0 / 4.4 / 4.0
+  µm.
 
   **The walls' angle against the passivation** (`recipe_physics.CRAIGIE2002`,
   `TestCraigie2002`): Craigie et al., JVST B 20, 2229 (2002), an Oxford
@@ -491,9 +504,19 @@ practical):
   degrees); on 62.5 nm cells the bowing at 7 s is the measured one (89.2
   against 89.4 degrees) and the narrowing at 12 s 1.4 degrees too much (92.0
   against 90.5): with a thick film the walls keep more of it than on the tool
-  (candidates: the passivation step's 15 W of bias, the ions reflected onto
-  the walls; the fluorocarbon the gas switching leaves in the etch step is 1
-  - 2 % of the passivation's in Ferma's transient model, too little). On 250 nm
+  (the fluorocarbon the gas switching leaves in the etch step is 1 - 2 % of
+  the passivation's in Ferma's transient model, too little). The passivation
+  step's bias is not the cause: with its measured 110 V (`pass_bias_v=110`;
+  Ferma's sheath at that voltage takes 2.5 W of the tool's 15 W over the 150
+  mm wafer, its ions at 115 eV wear off 1.15 of the radicals' 7.4 nm/s) and
+  Zhang et al.'s 10 W in the calibration, the walls narrow more, as Zhang et
+  al.'s do: 90.0 and 93.8 degrees at 7 and 12 s on 250 nm cells, 90.1 and
+  93.8 on 125 nm; the swing from 7 to 12 s stays 3 - 4 degrees against the
+  measured 1.1 (the measured 150 V of the etch step, against Ferma's 296 V
+  for 30 W over the wafer, would need Zhang et al.'s voltages too, which are
+  not given). Left: the ions' yield on the oblique film of the bottom's
+  corners (a sputter yield rises off the normal; here it does not) and the
+  ions reflected from the walls. On 250 nm
   cells 5 s of passivation break through the walls' film where the
   measurement shows 89 degrees. Ferma's global model does not converge for 5
   and 10 sccm of C₄F₈ at 450 W.

@@ -111,6 +111,53 @@ class TestFilm(unittest.TestCase):
         self.assertAlmostEqual(r.diagnostics["clear_time"], 2.0, delta=0.4)
 
 
+class TestBiasedPassivation(unittest.TestCase):
+    """A bias on the passivation step: its ions wear the film down with the
+    film's yield at their energy, where they reach it."""
+
+    def test_the_open_wafer_keeps_the_growth_less_the_removal(self):
+        f = replace(_reference(t_etch=0.5, cycles=1), pass_ion_energy=200.0)
+        removal = f.surface.film_yield(200.0) * f.pass_ion_flux
+        self.assertGreater(removal, 0.2 * f.flat_growth())
+        self.assertAlmostEqual(f.flat_film(),
+                               (f.flat_growth() - removal) * f.t_pass,
+                               delta=1e-15)
+        r = _etch(f)
+        self.assertAlmostEqual(r.diagnostics["film"] / f.flat_film(), 1.0,
+                               delta=0.03)
+
+    def test_no_removal_below_the_threshold(self):
+        f = _reference(cycles=1)
+        g = replace(f, pass_ion_energy=0.9 * f.surface.e_th_ion)
+        self.assertEqual(g.pass_removal(), 0.0)
+        self.assertEqual(g.flat_film(), f.flat_film())
+
+    def test_the_ions_stop_at_the_substrate(self):
+        # ions that take more than the radicals bring leave the open wafer
+        # bare, and do not etch it: the etch step etches from its start
+        f = _reference(t_etch=3.0, cycles=1)
+        f = replace(f, pass_ion_energy=200.0,
+                    pass_ion_flux=2.0 * f.flat_growth()
+                    / f.surface.film_yield(200.0))
+        self.assertEqual(f.flat_film(), 0.0)
+        r = _etch(f)
+        self.assertLess(r.diagnostics["film"], 0.02 * r.dx * 1e-6)
+        d = _surface_at(r, 25.0)
+        self.assertAlmostEqual(d / (f.flat_etch_rate() * 3.0 * 1e6), 1.0,
+                               delta=0.05)
+
+    def test_calibration_scales_the_growth_not_the_removal(self):
+        f = replace(_reference(cycles=1), pass_ion_energy=200.0)
+        g = f.calibrated(_BREAKTHROUGH)
+        self.assertAlmostEqual(g.breakthrough(), _BREAKTHROUGH, places=9)
+        self.assertEqual(g.pass_removal(), f.pass_removal())
+        k = g.surface.alpha_dep / f.surface.alpha_dep
+        self.assertAlmostEqual(g.growth_scale(f), k, places=12)
+        # the removal has to be made up: more growth than without the bias
+        self.assertGreater(k, replace(f, pass_ion_energy=0.0).calibrated(
+            _BREAKTHROUGH).growth_scale(f))
+
+
 class TestTransport(unittest.TestCase):
     def test_rie_lag(self):
         # without the film F limits the etch: a 1 um trench etches slower

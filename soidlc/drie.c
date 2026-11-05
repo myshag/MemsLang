@@ -26,7 +26,11 @@
  *     Eng. 87, 20 (2010)): deposited by the passivation step, each radical
  *     joining it with its own probability (its volume each; soidlc/film.py)
  *     and alphaDep per ion that arrives; removed in the etch step, alphaPoly per ion
- *     and betaPoly per F; silicon and the mask etch only where it is gone.  It
+ *     and betaPoly per F, and in the passivation step by its ions, with the
+ *     film's yield at their energy (EP: a bias on that step; 0, or below the
+ *     threshold: none) -- where they remove more than the radicals bring, the
+ *     film thins, down to the substrate; silicon and the mask etch only where
+ *     it is gone.  It
  *     is a layer with its thickness, as in ViennaPS: a second level set (the
  *     top: the substrate and the film) over the substrate's.  The passivation
  *     step moves the top into the void; the etch step moves it through the
@@ -62,8 +66,8 @@ enum {
     P_CYCLES, P_TETCH, P_TPASS, P_GF, P_GIE, P_EE, P_GIP,
     P_SF, P_KTH, P_ASI, P_ETHSI, P_APOLY, P_BPOLY, P_AMASK, P_BMASK,
     P_EREF, P_ETHION, P_ADEP, P_SPOLY, P_SMASK, P_SIGMA,
-    P_NRAYS, P_NIONS, P_NSI, P_CFL, P_REINIT, P_ESI, P_LSIA, P_LSIB, P_NPREC,
-    P_N
+    P_NRAYS, P_NIONS, P_NSI, P_CFL, P_REINIT, P_ESI, P_LSIA, P_LSIB, P_EP,
+    P_NPREC, P_N
 };
 enum { O_ETCH0, O_THETA0, O_FILM0, O_CLEAR0, O_FLUXCALLS, O_STEPS, O_N };
 
@@ -476,10 +480,12 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
     double Ypoly = ion_yield(p[P_EE], kpoly, p[P_ETHION]);
     double Ymask = ion_yield(p[P_EE], kmask, p[P_ETHION]);
     double Ysi = ion_yield(p[P_ESI], p[P_ASI], p[P_ETHSI]);
+    double Ypass = ion_yield(p[P_EP], kpoly, p[P_ETHION]);   /* the passivation's ions */
     /* phi: the substrate (silicon, mask, stop layer); top: it and its film */
     double *top = malloc(sizeof(double) * n);
     memcpy(top, phi, sizeof(double) * n);
     double *V = calloc(n, sizeof(double)), *g = malloc(sizeof(double) * n);
+    double *Vr = calloc(n, sizeof(double));
     double *tmp = malloc(sizeof(double) * n);
     int *cell2sp = malloc(sizeof(int) * n), *band = malloc(sizeof(int) * n);
     int *queue = malloc(sizeof(int) * n);
@@ -493,16 +499,22 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
 
     for (int c = 0; c < cycles; c++) {
         /* ---- passivation: the film grows where its radicals stick and the
-         * ions arrive, its surface moving into the void ---- */
+         * ions arrive, its surface moving into the void; the ions of a
+         * biased step wear it down where they bring more than the radicals,
+         * its surface moving back to the substrate ---- */
         double t = 0.0, moved = 1e30, vmax = 0.0;
         while (t < p[P_TPASS] - 1e-12) {
             if (moved > 0.5 * dx) {
                 find_surface(top, phi, mask, nx, nz, dx, j_box, &s, cell2sp);
                 views_compute(top, &s, cell2sp, nx, nz, nr, ni, sigma, &v);
                 state_size(&st, s.n);
-                /* the growth (m/s): the ions', then each radical's with its
-                 * own sticking (its transport into the feature too) */
-                for (int m = 0; m < s.n; m++) st.v[m] = p[P_ADEP] * p[P_GIP] * v.ion[m];
+                /* the growth (st.v, m/s): the ions', then each radical's with
+                 * its own sticking (its transport into the feature too); the
+                 * ions' removal (st.Gi) */
+                for (int m = 0; m < s.n; m++) {
+                    st.v[m] = p[P_ADEP] * p[P_GIP] * v.ion[m];
+                    st.Gi[m] = Ypass * p[P_GIP] * v.ion[m];
+                }
                 for (int q = 0; q < (int)p[P_NPREC]; q++) {
                     const double *r = p + P_N + 3 * q;     /* flux, sticking, volume */
                     if (!(r[0] > 0.0 && r[1] > 0.0)) continue;
@@ -512,19 +524,34 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
                     for (int m = 0; m < s.n; m++) st.v[m] += r[0] * r[1] * r[2] * st.G[m];
                 }
                 smooth_sp(&s, cell2sp, nx, nz, st.v, st.keep);
+                if (Ypass > 0.0) smooth_sp(&s, cell2sp, nx, nz, st.Gi, st.keep);
                 vmax = 0.0;
                 for (int m = 0; m < s.n; m++) {
-                    st.v[m] *= 1e6;                                       /* um/s */
-                    vmax = dmax(vmax, st.v[m]);
+                    st.v[m] *= 1e6, st.Gi[m] *= 1e6;                     /* um/s */
+                    vmax = dmax(vmax, dmax(st.v[m], st.Gi[m]));
                 }
                 label_all(cell2sp, nx, nz, band, queue);
                 moved = 0.0;
             }
             if (vmax <= 0.0) break;
             double dt = dmin(p[P_TPASS] - t, p[P_CFL] * dx / vmax);
+            if (Ypass > 0.0) film_at(&s, top, phi, dx);
+            /* the net growth; where the ions take more, the film thins at the
+             * difference, but no further than to the substrate */
             #pragma omp parallel for schedule(static)
-            for (int k = 0; k < n; k++) V[k] = band[k] >= 0 ? st.v[band[k]] : 0.0;
+            for (int k = 0; k < n; k++) {
+                int m = band[k];
+                double net = m >= 0 ? st.v[m] - st.Gi[m] : 0.0;
+                V[k] = dmax(net, 0.0);
+                Vr[k] = net < 0.0 ? dmin(-net, s.h[m] / dt) : 0.0;
+            }
             grow(top, V, g, nx, nz, dx, dt);
+            if (Ypass > 0.0) {
+                advect(top, Vr, g, nx, nz, dx, dt);
+                #pragma omp parallel for schedule(static)
+                for (int k = 0; k < n; k++)
+                    if (top[k] > phi[k]) top[k] = phi[k];
+            }
             moved += vmax * dt;
             if (++sc % stride == 0) redistance(top, phi, tmp, nx, nz, dx);
             t += dt;
@@ -617,7 +644,7 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
         }
     }
     reinit(phi, tmp, nx, nz, dx, 2);
-    free(top); free(V); free(g); free(tmp); free(cell2sp); free(band);
+    free(top); free(V); free(Vr); free(g); free(tmp); free(cell2sp); free(band);
     free(queue);
     surf_free(&s); views_free(&v);
     free(st.G); free(st.Gi); free(st.theta); free(st.keep); free(st.v);
@@ -632,7 +659,7 @@ void drie_run(double *phi, const unsigned char *mask, int nx, int nz,
     double dep = p[P_ADEP] * p[P_GIP];
     for (int q = 0; q < (int)p[P_NPREC]; q++)
         dep += p[P_N + 3 * q] * p[P_N + 3 * q + 1] * p[P_N + 3 * q + 2];
-    dep *= p[P_TPASS];
+    dep = dmax(0.0, dep - ion_yield(p[P_EP], kpoly, p[P_ETHION]) * p[P_GIP]) * p[P_TPASS];
     double strip = (ion_yield(p[P_EE], kpoly, p[P_ETHION]) * p[P_GIE]
                     + p[P_BPOLY] * p[P_GF]) * p[P_TETCH];
     double h = 0.0, peak = 0.0;

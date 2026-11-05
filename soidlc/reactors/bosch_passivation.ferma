@@ -1,5 +1,5 @@
 # The passivation step of a Bosch process (soidlc.plasma, the C4F8 half of BoschProcess) in the planar-coil ICP reactor of
-# bosch_etch.ferma: c-C4F8 on the coil's RF power, no bias, solved by Ferma's global model (ferma_icp): the gas chemistry of
+# bosch_etch.ferma: c-C4F8 on the coil's RF power (a bias, P_b or V_b, if any), solved by Ferma's global model (ferma_icp): the gas chemistry of
 # the built-in mechanism "c4f8" and the transport of the neutrals to the 150 mm wafer, whose CFx fluxes deposit the
 # fluorocarbon film. soidlc overrides the parameters with -p (ferma build -p P_rf=600W ...).
 param R      = 10 cm                      # chamber radius
@@ -10,6 +10,8 @@ param w      = 6 mm                       # turn cross-section
 param P_rf   = 600 W in 50 W .. 5 kW      # coil (generator) power
 param p      = 30 mTorr in 5 mTorr .. 200 mTorr
 param q_c4f8 = 100 sccm in 5 sccm .. 1 slm
+param P_b    = 0 W in 0 W .. 300 W         # bias power on the wafer (0: none)
+param V_b    = 0 V in 0 V .. 1 kV          # or the bias as its RF amplitude (0: none)
 let   zc     = H + t_win + gap + w/2
 
 domain icp    = axisymmetric(r: R, z: 14 cm)
@@ -28,4 +30,5 @@ mesh turns4 = refine(on: coil4, size: 0.5 mm)
 
 material dep = gas(name: "c4f8", pressure: p, temperature: 315 K, feed: [flow("C4F8", q_c4f8)])
 load     rf  = coil(on: [coil1, coil2, coil3, coil4], power: P_rf, resistance: 0.5 ohm)
-analysis run = discharge(on: plasma, gas: dep, model: "global", wafer_diameter: 150 mm)
+analysis run = discharge(on: plasma, gas: dep, model: "global", wafer_diameter: 150 mm,
+                         bias_power: P_b, bias_voltage: V_b, bias_frequency: 13.56 MHz)

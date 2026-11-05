@@ -10,7 +10,8 @@ param H     = 15 cm                       # plasma height, the wafer at z = 0
 param t_w   = 5 mm                        # alumina wall
 param w     = 6 mm                        # turn cross-section
 param P_rf  = 700 W in 50 W .. 5 kW       # coil (generator) power
-param P_b   = 25 W in 1 W .. 300 W        # bias power on the wafer
+param P_b   = 25 W in 0 W .. 300 W        # bias power on the wafer
+param V_b   = 0 V in 0 V .. 1 kV          # or the bias as its RF amplitude (0: P_b)
 param p     = 40 mTorr in 5 mTorr .. 200 mTorr
 param q_sf6 = 100 sccm in 5 sccm .. 1 slm
 param f_open = 1.3 %                      # open share of the wafer
@@ -31,4 +32,5 @@ mesh turns3 = refine(on: coil3, size: 0.5 mm)
 material etch = gas(name: "sf6", pressure: p, temperature: 315 K, feed: [flow("SF6", q_sf6)])
 load     rf   = coil(on: [coil1, coil2, coil3], power: P_rf, resistance: 0.5 ohm)
 analysis run  = discharge(on: plasma, gas: etch, model: "global", wafer_diameter: 150 mm,
-                         wafer_open_fraction: f_open, bias_power: P_b, bias_frequency: 13.56 MHz)
+                         wafer_open_fraction: f_open, bias_power: P_b, bias_voltage: V_b,
+                         bias_frequency: 13.56 MHz)

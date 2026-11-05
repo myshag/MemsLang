@@ -129,6 +129,15 @@ class SurfaceKinetics:
     si_alpha: float = 0.0
     si_beta: float = 0.0
 
+    def film_yield(self, energy: float) -> float:
+        """The film removed per ion of ``energy`` eV, m^3 (``alpha_poly`` at
+        ``e_ref``, as sqrt(E) - sqrt(``e_th_ion``); 0 below the threshold)."""
+        if energy <= self.e_th_ion:
+            return 0.0
+        return (self.alpha_poly
+                * (math.sqrt(energy) - math.sqrt(self.e_th_ion))
+                / (math.sqrt(self.e_ref) - math.sqrt(self.e_th_ion)))
+
 
 @dataclass
 class BoschFluxes:
@@ -141,6 +150,10 @@ class BoschFluxes:
     # the radicals that build the film in the passivation step (soidlc.film)
     precursors: Tuple[FilmPrecursor, ...]
     pass_ion_flux: float             # positive ions, passivation step
+    # their mean energy at the wafer, eV: a bias on the passivation step
+    # makes its ions wear the film down (SurfaceKinetics.film_yield); 0 (or
+    # an unbiased wafer's few eV, below the film's threshold): they do not
+    pass_ion_energy: float = 0.0
     t_etch: float = 7.0              # s
     t_pass: float = 5.0              # s
     cycles: int = 40
@@ -178,7 +191,8 @@ class BoschFluxes:
         return cls(f_flux=f_flux, ion_flux=etch.ion_flux,
                    ion_energy=etch.ion_energy,
                    precursors=film.precursors(passivation.radicals),
-                   pass_ion_flux=passivation.ion_flux, si_energy=si_energy,
+                   pass_ion_flux=passivation.ion_flux,
+                   pass_ion_energy=passivation.ion_energy, si_energy=si_energy,
                    **kw)
 
     def flat_etch_rate(self) -> float:
@@ -191,19 +205,27 @@ class BoschFluxes:
         theta = sg / (sg + s.thermal + 2.0 * y * self.ion_flux)
         return theta * (0.25 * s.thermal + y * self.ion_flux) / s.n_si
 
+    def flat_growth(self) -> float:
+        """The film the radicals and the ions add to the open flat wafer in
+        the passivation step, m/s (before the ions' removal)."""
+        return (film.growth(self.precursors)
+                + self.surface.alpha_dep * self.pass_ion_flux)
+
+    def pass_removal(self) -> float:
+        """The film the passivation step's ions remove from the open flat
+        wafer, m/s (a bias on that step)."""
+        return self.surface.film_yield(self.pass_ion_energy) * self.pass_ion_flux
+
     def flat_film(self) -> float:
         """Film one passivation step leaves on the open flat wafer, m."""
-        return (film.growth(self.precursors)
-                + self.surface.alpha_dep * self.pass_ion_flux) * self.t_pass
+        return max(0.0, self.flat_growth() - self.pass_removal()) * self.t_pass
 
     def flat_strip(self) -> float:
         """Rate at which the etch step wears the film off the open flat
         wafer, m/s (the ions and F)."""
         s = self.surface
-        y = (s.alpha_poly * (math.sqrt(self.ion_energy) - math.sqrt(s.e_th_ion))
-             / (math.sqrt(s.e_ref) - math.sqrt(s.e_th_ion))
-             if self.ion_energy > s.e_th_ion else 0.0)
-        return y * self.ion_flux + s.beta_poly * self.f_flux
+        return (s.film_yield(self.ion_energy) * self.ion_flux
+                + s.beta_poly * self.f_flux)
 
     def breakthrough(self) -> float:
         """Time the etch step takes to clear one passivation step's film off
@@ -217,9 +239,13 @@ class BoschFluxes:
         in ``breakthrough`` seconds of the etch step -- the one constant to
         take from the tool (the film's growth is the least transferable
         number: the radicals' fluxes and the film's density as much as the
-        sticking).  The scale (:meth:`growth_scale`) says how far the
-        plasma's fluxes and the measured sticking are from the tool's."""
-        return self.growth_scaled(breakthrough / self.breakthrough())
+        sticking).  The passivation's ions' removal is not scaled: it is
+        their yield, the same as the etch step's.  The scale
+        (:meth:`growth_scale`) says how far the plasma's fluxes and the
+        measured sticking are from the tool's."""
+        want = breakthrough * self.flat_strip() / self.t_pass
+        return self.growth_scaled((want + self.pass_removal())
+                                  / self.flat_growth())
 
     def growth_scaled(self, k: float) -> "BoschFluxes":
         """These fluxes with every radical's film and the ions' scaled by k
@@ -230,9 +256,9 @@ class BoschFluxes:
         return replace(self, surface=s, precursors=pre)
 
     def growth_scale(self, reference: "BoschFluxes") -> float:
-        """The film's growth relative to ``reference``'s (e.g. these fluxes
-        before :meth:`calibrated`)."""
-        return self.flat_film() / reference.flat_film()
+        """The film's growth (:meth:`flat_growth`) relative to
+        ``reference``'s (e.g. these fluxes before :meth:`calibrated`)."""
+        return self.flat_growth() / reference.flat_growth()
 
     def _params(self):
         s = self.surface
@@ -247,7 +273,7 @@ class BoschFluxes:
                 self.reinit_stride,
                 self.si_energy if self.si_energy is not None
                 else self.ion_energy, s.si_alpha, s.si_beta,
-                len(self.precursors)] + pre
+                self.pass_ion_energy, len(self.precursors)] + pre
 
 
 @dataclass

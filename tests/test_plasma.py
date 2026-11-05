@@ -49,6 +49,19 @@ class TestSummaries(unittest.TestCase):
         self.assertEqual({p.name for p in film.precursors(d.radicals)},
                          {"CF", "CF2", "CF3", "C", "C2F4", "C3F5"})
         self.assertGreater(d.ion_flux, 0.0)
+        self.assertEqual(d.ion_energy, 0.0)        # no bias
+
+    def test_biased_passivation_step(self):
+        # the ions' flux-weighted mean energy at a biased wafer
+        summary = _summary("bosch_passivation")
+        ions = [x for x in summary["species"] if x["name"].endswith("+")
+                and x.get("flux")][:2]
+        summary["bias"] = {"ions": [{"name": ions[0]["name"], "mean": 100.0},
+                                    {"name": ions[1]["name"], "mean": 200.0}]}
+        a, b = ions[0]["flux"], ions[1]["flux"]
+        d = plasma.passivation_plasma(summary)
+        self.assertAlmostEqual(d.ion_energy, (100 * a + 200 * b) / (a + b),
+                               places=9)
 
     def test_failures_reported(self):
         bad = _summary("bosch_etch")
@@ -74,9 +87,9 @@ class _StandIn:
     def __init__(self):
         self.calls = 0
 
-    def etch(self, coil_w, pressure_mtorr, sf6_sccm, bias_w):
+    def etch(self, coil_w, pressure_mtorr, sf6_sccm, bias_w, bias_v=0.0):
         self.calls += 1
-        energy = 124.0 * math.sqrt(bias_w / 15.0)
+        energy = bias_v + 5.0 if bias_v else 124.0 * math.sqrt(bias_w / 15.0)
         share = energy / (energy + 50.0) * (30.0 / pressure_mtorr) ** 0.3
         share = min(0.95, share)
         f_flux = 1.8e22 * (coil_w / 600.0) * (sf6_sccm / 130.0) ** 0.5
@@ -86,12 +99,15 @@ class _StandIn:
                                  ion_flux=ion_flux, ion_energy=energy,
                                  ne=7e16, te=3.4)
 
-    def passivation(self, coil_w, pressure_mtorr, c4f8_sccm):
+    def passivation(self, coil_w, pressure_mtorr, c4f8_sccm, bias_w=0.0,
+                    bias_v=0.0):
         self.calls += 1
         return plasma.PassivationPlasma(
             radicals={k: v * (coil_w / 600.0) * (c4f8_sccm / 100.0)
                       for k, v in (("CF", 1e22), ("CF2", 2e22), ("CF3", 5e21))},
-            ion_flux=2e19 * coil_w / 600.0, ne=1e17, te=3.0)
+            ion_flux=2e19 * coil_w / 600.0, ne=1e17, te=3.0,
+            ion_energy=bias_v + 5.0 if bias_v
+            else 124.0 * math.sqrt(bias_w / 15.0))
 
 
 class TestRecipeFromPlasma(unittest.TestCase):
@@ -120,6 +136,12 @@ class TestRecipeFromPlasma(unittest.TestCase):
         lo = self._rec(c4f8=60, t_pass=2)
         hi = self._rec(c4f8=160, t_pass=9)
         self.assertGreater(hi.passivation, lo.passivation)
+
+    def test_passivation_bias_thins_the_film(self):
+        # the passivation's ions wear the open wafer's film down
+        lo = self._rec(pass_bias_w=15)
+        hi = self._rec()
+        self.assertLess(lo.passivation, hi.passivation)
 
     def test_pressure_raises_isotropy(self):
         lo = self._rec(pressure=20)
@@ -156,6 +178,16 @@ class TestCache(unittest.TestCase):
             self.assertEqual(len(runs), 1)              # disk
             q.etch(600, 30, 130, 20)
             self.assertEqual(len(runs), 2)              # a new recipe
+            # a step's bias goes to the reactor as power or as voltage
+            self.assertIn(("P_b", "20 W"), runs[-1])
+            self.assertIn(("V_b", "0 V"), runs[-1])
+            q._solve = lambda reactor, params: (runs.append(params),
+                                                _summary("bosch_passivation"))[1]
+            q.passivation(600, 30, 100)
+            self.assertIn(("P_b", "0 W"), runs[-1])
+            q.passivation(600, 30, 100, bias_v=110)
+            self.assertIn(("P_b", "0 W"), runs[-1])
+            self.assertIn(("V_b", "110 V"), runs[-1])
 
     def test_missing_binaries(self):
         p = plasma.FermaPlasma(ferma="/nonexistent/ferma",

@@ -8,7 +8,8 @@ param t_win = 1.5 cm                      # window thickness
 param gap   = 3 mm                        # window to coil turns
 param w     = 6 mm                        # turn cross-section
 param P_rf  = 600 W in 50 W .. 5 kW       # coil (generator) power
-param P_b   = 15 W in 1 W .. 300 W        # bias power on the wafer
+param P_b   = 15 W in 0 W .. 300 W        # bias power on the wafer
+param V_b   = 0 V in 0 V .. 1 kV          # or the bias as its RF amplitude (0: P_b)
 param p     = 30 mTorr in 5 mTorr .. 200 mTorr
 param q_sf6 = 130 sccm in 5 sccm .. 1 slm
 let   zc    = H + t_win + gap + w/2
@@ -30,4 +31,5 @@ mesh turns4 = refine(on: coil4, size: 0.5 mm)
 material etch = gas(name: "sf6", pressure: p, temperature: 315 K, feed: [flow("SF6", q_sf6)])
 load     rf   = coil(on: [coil1, coil2, coil3, coil4], power: P_rf, resistance: 0.5 ohm)
 analysis run  = discharge(on: plasma, gas: etch, model: "global", wafer_diameter: 150 mm,
-                         bias_power: P_b, bias_frequency: 13.56 MHz)
+                         bias_power: P_b, bias_voltage: V_b,
+                         bias_frequency: 13.56 MHz)
