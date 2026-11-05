@@ -478,6 +478,7 @@ practical):
   | measured | 88.9 | 89.4 | 89.75 | 90.5 | 90.6 |
   | model, 25 nm cells | the walls' film breaks through | 87.8 | 90.2 | 91.7 | 93.8 |
   | model, 12.5 nm cells | | 88.8 | 90.7 | 91.7 | |
+  | model, 6.25 nm cells | | 89.2 | | 92.0 | |
 
   | passivation 10 s, C₄F₈ | 15 sccm | 20 | 30 | 60 | 80 |
   |---|---|---|---|---|---|
@@ -485,14 +486,17 @@ practical):
   | model, 25 nm cells | 85.9 | 86.9 (12.5 nm: 88.0) | 88.6 | 90.2 | 90.8 |
 
   The trends and where the walls turn vertical (10 s and 60 sccm; measured
-  11 - 12 s and 50 sccm) come out without a fit; the model's walls swing two
-  to three times more than the measured, and 5 s of passivation break through
-  their film where the measurement still shows 89 degrees: the balance on
-  the walls is finer here than on the tool (candidates: the fluorocarbon the
-  gas switching leaves in the etch step, the passivation step's 15 W of bias,
-  the ions reflected onto the walls). The angle needs cells of 125 nm or less
-  (at 500 nm the 20 sccm case narrows to 95.7 degrees). Ferma's global model
-  does not converge for 5 and 10 sccm of C₄F₈ at 450 W.
+  11 - 12 s and 50 sccm) come out without a fit. The angle needs fine cells:
+  the walls' film is 30 - 60 nm (at 500 nm the 20 sccm case narrows to 95.7
+  degrees); on 62.5 nm cells the bowing at 7 s is the measured one (89.2
+  against 89.4 degrees) and the narrowing at 12 s 1.4 degrees too much (92.0
+  against 90.5): with a thick film the walls keep more of it than on the tool
+  (candidates: the passivation step's 15 W of bias, the ions reflected onto
+  the walls; the fluorocarbon the gas switching leaves in the etch step is 1
+  - 2 % of the passivation's in Ferma's transient model, too little). On 25 nm
+  cells 5 s of passivation break through the walls' film where the
+  measurement shows 89 degrees. Ferma's global model does not converge for 5
+  and 10 sccm of C₄F₈ at 450 W.
   **Against ViennaPS** (`tests/test_drie.py::TestAgainstViennaPS`): its Bosch
   example (Ertl & Selberherr 2010, the same Kokkoris et al. coefficients) in
   2D, run in ViennaPS 4.7.0 on a 25 nm grid; here with silicon's linear law
