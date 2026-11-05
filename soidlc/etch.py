@@ -128,6 +128,15 @@ class SurfaceKinetics:
     # f_sticking 0.2); 0: Belen's
     si_alpha: float = 0.0
     si_beta: float = 0.0
+    # the film's and the mask's yields per ion against the ion's angle to the
+    # surface's normal theta: (1 + B sin^2 theta) cos theta, a sputtering
+    # yield's form (Yamamura), up to 3.9 times the normal one near 52 degrees
+    # (B 8.5) and 0 at grazing incidence, as ViennaPS's PlasmaEtching takes
+    # it (polymer 8.5, mask 9.3); negative: the same at every angle.  Off:
+    # with ViennaPS's B the scallops of Zhang et al.'s recipe come out 103 nm
+    # (measured 70 - 80) and Craigie et al.'s angles as without (the README)
+    poly_angular: float = -1.0
+    mask_angular: float = -1.0
 
     def film_yield(self, energy: float) -> float:
         """The film removed per ion of ``energy`` eV, m^3 (``alpha_poly`` at
@@ -273,7 +282,8 @@ class BoschFluxes:
                 self.reinit_stride,
                 self.si_energy if self.si_energy is not None
                 else self.ion_energy, s.si_alpha, s.si_beta,
-                self.pass_ion_energy, len(self.precursors)] + pre
+                self.pass_ion_energy, s.poly_angular, s.mask_angular,
+                len(self.precursors)] + pre
 
 
 @dataclass

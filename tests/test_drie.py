@@ -158,6 +158,33 @@ class TestBiasedPassivation(unittest.TestCase):
             _BREAKTHROUGH).growth_scale(f))
 
 
+class TestAngularYield(unittest.TestCase):
+    """The film's and the mask's yields per ion against the ion's angle
+    (SurfaceKinetics.poly_angular, mask_angular; off by default): rising off
+    the normal, they clear the oblique film of a trench bottom's corners
+    sooner, an open flat surface's not."""
+
+    @staticmethod
+    def _sputtering(f):
+        return replace(f, surface=replace(f.surface, poly_angular=8.5,
+                                          mask_angular=9.3))
+
+    def test_the_bottoms_corners_clear_sooner(self):
+        f = _reference(cycles=12).calibrated(_BREAKTHROUGH)
+        a, b = [etch.simulate([(10.0, 16.0)], domain_w=26.0, depth=8.0,
+                              dx=0.1, fluxes=x, box_at=8.0, mask_thick=6.0)
+                for x in (self._sputtering(f), f)]
+        self.assertGreater(a.depths[0], 1.05 * b.depths[0])
+
+    def test_an_open_flat_surface_as_without(self):
+        f = _reference(cycles=1).calibrated(2.0)
+        a, b = _etch(self._sputtering(f)), _etch(f)
+        self.assertAlmostEqual(_surface_at(a, 25.0) / _surface_at(b, 25.0),
+                               1.0, delta=0.01)
+        self.assertAlmostEqual(a.diagnostics["clear_time"],
+                               b.diagnostics["clear_time"], delta=0.02)
+
+
 class TestTransport(unittest.TestCase):
     def test_rie_lag(self):
         # without the film F limits the etch: a 1 um trench etches slower
@@ -268,7 +295,7 @@ def _es_fluxes(**kw):
         alpha_poly=125 * a3, beta_poly=0.03 * a3, alpha_mask=13.5 * a3,
         beta_mask=0.045 * a3, alpha_dep=10 * a3, stick_poly=0.1,
         stick_mask=0.2, e_ref=100.0,
-        ion_sigma_deg=math.degrees(1 / math.sqrt(1000)))
+        ion_sigma_deg=math.degrees(1 / math.sqrt(1000)))   # its B_sp: -1
     kw = {"f_flux": 1e23, "ion_flux": 4.375e19, "ion_energy": 100.0,
           "precursors": (film.FilmPrecursor("CFx", 2e22, 0.1, 5 * a3),),
           "pass_ion_flux": 3.125e19, "t_etch": 11.0,

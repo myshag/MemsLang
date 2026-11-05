@@ -406,7 +406,11 @@ practical):
   its ions wear the film down as well, with the film's yield at their
   energy, where they reach it (the open surface and the bottom, not the
   walls): where they take more than the radicals bring, the film thins, down
-  to the substrate. The reactors carry each step's bias as `P_b` or `V_b`,
+  to the substrate. The ions' yields are the same at every angle; ray by
+  ray, the film's and the mask's can instead rise off the normal as a
+  sputtering yield does (`SurfaceKinetics.poly_angular`, `mask_angular`: (1 +
+  B sin²θ) cos θ, ViennaPS's PlasmaEtching form, B 8.5 and 9.3 there; off,
+  see the Craigie comparison). The reactors carry each step's bias as `P_b` or `V_b`,
   0 for none (needs Ferma #129: 0 as no bias, and the sheath over a wafer
   without a chemistry of its own, as under C₄F₈).
 
@@ -514,14 +518,22 @@ practical):
   93.8 on 125 nm; the swing from 7 to 12 s stays 3 - 4 degrees against the
   measured 1.1 (the measured 150 V of the etch step, against Ferma's 296 V
   for 30 W over the wafer, would need Zhang et al.'s voltages too, which are
-  not given). Left: the ions' yield on the oblique film of the bottom's
-  corners (a sputter yield rises off the normal; here it does not) and the
-  ions reflected from the walls. On 250 nm
+  not given). Nor is the ions' yield on the oblique film of the bottom's
+  corners: with the film's and the mask's yields rising off the normal as
+  ViennaPS's sputtering form has them (B 8.5, 9.3, ray by ray), the corners
+  clear sooner, Zhang et al.'s depth then needs a breakthrough of 11.15 s
+  (growth 1.45 times higher; their walls 5.8 / 5.0 / 5.2 / 5.0 µm), and
+  Craigie's angles come out 89.7 and 92.0 degrees at 7 and 12 s on 250 nm
+  cells, but 88.8 and 91.7 on 125 nm, as without it: the higher growth puts
+  back on the walls what the corners lose. Zhang et al.'s scallops grow to
+  103 nm (measured 70 - 80), so the yields stay the same at every angle.
+  Left: the ions reflected from the walls. On 250 nm
   cells 5 s of passivation break through the walls' film where the
   measurement shows 89 degrees. Ferma's global model does not converge for 5
   and 10 sccm of C₄F₈ at 450 W.
   **Against ViennaPS** (`tests/test_drie.py::TestAgainstViennaPS`): its Bosch
-  example (Ertl & Selberherr 2010, the same Kokkoris et al. coefficients) in
+  example (Ertl & Selberherr 2010, the same Kokkoris et al. coefficients; its
+  ions' yields the same at every angle, `B_sp` -1, as here) in
   2D, run in ViennaPS 4.7.0 on a 25 nm grid; here with silicon's linear law
   (`SurfaceKinetics.si_alpha`, `si_beta`: 270 Å³ per ion, 0.9 Å³ per F, F
   sticking 0.2) in place of Belen's. A 2 µm trench under 0.6 µm of mask, 10

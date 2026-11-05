@@ -11,7 +11,12 @@
  *     factors F (cosine law; in the cross-section of a long trench 1/2 cos phi
  *     dphi) from rays cast from every surface point, solved with BiCGSTAB;
  *   - ions come from above with a Gaussian spread of angles `sigma` (no
- *     reflection): flux per unit area sum_a w_a vis_a max(0, -d_a.n) / cos a.
+ *     reflection): flux per unit area sum_a w_a vis_a max(0, -d_a.n) / cos a;
+ *     the film's and the mask's yields per ion depend on each ion's angle to
+ *     the surface's normal theta, as a sputtering yield does (Yamamura's form,
+ *     as ViennaPS's PlasmaEtching takes it): f = (1 + B sin^2 theta) cos theta,
+ *     B per material (PANG, MANG; negative: f = 1, the default), so the
+ *     flux they remove with is sum_a w_a vis_a cos theta_a f(theta_a) / cos a.
  *
  * Surface kinetics:
  *   - silicon: the adsorbed-F model of Ferma's wafer (Belen et al., J. Vac. Sci.
@@ -67,7 +72,7 @@ enum {
     P_SF, P_KTH, P_ASI, P_ETHSI, P_APOLY, P_BPOLY, P_AMASK, P_BMASK,
     P_EREF, P_ETHION, P_ADEP, P_SPOLY, P_SMASK, P_SIGMA,
     P_NRAYS, P_NIONS, P_NSI, P_CFL, P_REINIT, P_ESI, P_LSIA, P_LSIB, P_EP,
-    P_NPREC, P_N
+    P_PANG, P_MANG, P_NPREC, P_N
 };
 enum { O_ETCH0, O_THETA0, O_FILM0, O_CLEAR0, O_FLUXCALLS, O_STEPS, O_N };
 
@@ -218,7 +223,15 @@ typedef struct {
     int *hit;          /* n * nr targets */
     double *sky;       /* fraction of the cosine-weighted hemisphere that is sky */
     double *ion;       /* ion flux per unit area over the source flux */
+    double *ion2, *ion4;   /* the same weighted with cos^2, cos^4 of the angle
+                              to the normal (the yields' angular forms) */
 } Views;
+
+/* the ion flux a material with the angular form B removes with (over the
+ * source flux): (1 + B) ion2 - B ion4; B < 0: the flux itself */
+static double ion_removing(const Views *v, int m, double B) {
+    return B < 0.0 ? v->ion[m] : (1.0 + B) * v->ion2[m] - B * v->ion4[m];
+}
 
 static void views_compute(const double *phi, const Surf *s, const int *cell2sp,
                           int nx, int nz, int nr, int ni, double sigma,
@@ -228,6 +241,8 @@ static void views_compute(const double *phi, const Surf *s, const int *cell2sp,
     v->hit = realloc(v->hit, sizeof(int) * (size_t)n * nr);
     v->sky = realloc(v->sky, sizeof(double) * n);
     v->ion = realloc(v->ion, sizeof(double) * n);
+    v->ion2 = realloc(v->ion2, sizeof(double) * n);
+    v->ion4 = realloc(v->ion4, sizeof(double) * n);
     /* ion directions: Gaussian in angle, ni points over +-3 sigma */
     double ang[64], w[64], wsum = 0.0;
     if (ni > 64) ni = 64;
@@ -254,19 +269,24 @@ static void views_compute(const double *phi, const Surf *s, const int *cell2sp,
             if (t == SKY) nsky++;
         }
         v->sky[m] = (double)nsky / nr;
-        double f = 0.0;
+        double f = 0.0, f2 = 0.0, f4 = 0.0;
         for (int a = 0; a < ni; a++) {
             double dxi = sin(ang[a]), dzi = cos(ang[a]);   /* travelling down */
             double c = -(dxi * ux + dzi * uz);
             if (c <= 0.0) continue;
-            if (march(phi, s, cell2sp, nx, nz, x0, z0, -dxi, -dzi) == SKY)
-                f += w[a] * c / dzi;
+            if (c > 1.0) c = 1.0;
+            if (march(phi, s, cell2sp, nx, nz, x0, z0, -dxi, -dzi) == SKY) {
+                double q = w[a] * c / dzi;
+                f += q, f2 += q * c, f4 += q * c * c * c;
+            }
         }
-        v->ion[m] = f;
+        v->ion[m] = f, v->ion2[m] = f2, v->ion4[m] = f4;
     }
 }
 
-static void views_free(Views *v) { free(v->hit); free(v->sky); free(v->ion); }
+static void views_free(Views *v) {
+    free(v->hit); free(v->sky); free(v->ion); free(v->ion2); free(v->ion4);
+}
 
 /* y = x - K x, K_st = (1 - S_t) / nr per ray from s that hits t */
 static void kmul(const Views *v, int n, const double *keep, const double *x,
@@ -376,6 +396,7 @@ static double ion_yield(double E, double A, double Eth) {
 
 typedef struct {
     double *G, *Gi, *theta, *keep, *v;   /* per surface point */
+    double *Gp, *Gm;   /* the ion flux the film and the mask are removed with */
 } State;
 
 static void state_size(State *st, int n) {
@@ -384,6 +405,8 @@ static void state_size(State *st, int n) {
     st->theta = realloc(st->theta, sizeof(double) * n);
     st->keep = realloc(st->keep, sizeof(double) * n);
     st->v = realloc(st->v, sizeof(double) * n);
+    st->Gp = realloc(st->Gp, sizeof(double) * n);
+    st->Gm = realloc(st->Gm, sizeof(double) * n);
 }
 
 /* the etch step's fluxes and silicon coverage on the current surface */
@@ -393,6 +416,8 @@ static void etch_fluxes(const double *p, const Surf *s, const Views *v,
     double Ysi = ion_yield(p[P_ESI], p[P_ASI], p[P_ETHSI]);
     for (int m = 0; m < n; m++) {
         st->Gi[m] = p[P_GIE] * v->ion[m];
+        st->Gp[m] = p[P_GIE] * ion_removing(v, m, p[P_PANG]);
+        st->Gm[m] = p[P_GIE] * ion_removing(v, m, p[P_MANG]);
         st->theta[m] = 1.0;
     }
     /* the linear law (P_LSIA, P_LSIB > 0): F sticks on silicon with P_SF,
@@ -421,6 +446,8 @@ static void etch_fluxes(const double *p, const Surf *s, const Views *v,
     for (int m = 0; m < n; m++) st->G[m] *= p[P_GF];
     smooth_sp(s, cell2sp, nx, nz, st->G, st->keep);
     smooth_sp(s, cell2sp, nx, nz, st->Gi, st->keep);
+    smooth_sp(s, cell2sp, nx, nz, st->Gp, st->keep);
+    smooth_sp(s, cell2sp, nx, nz, st->Gm, st->keep);
     for (int m = 0; m < n; m++) {
         double sG = p[P_SF] * st->G[m];
         double loss = p[P_KTH] + 2.0 * Ysi * st->Gi[m];
@@ -431,7 +458,7 @@ static void etch_fluxes(const double *p, const Surf *s, const Views *v,
 /* the velocity (m/s) of a bare surface point of material `mat` */
 static double bare_rate(const double *p, const State *st, int m, int mat,
                         double Ysi, double Ymask) {
-    if (mat == 1) return Ymask * st->Gi[m] + p[P_BMASK] * st->G[m];
+    if (mat == 1) return Ymask * st->Gm[m] + p[P_BMASK] * st->G[m];
     if (mat == 2) return 0.0;
     if (p[P_LSIA] > 0.0 || p[P_LSIB] > 0.0)
         return p[P_LSIA] * st->Gi[m] + p[P_LSIB] * st->G[m];
@@ -513,7 +540,7 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
                  * ions' removal (st.Gi) */
                 for (int m = 0; m < s.n; m++) {
                     st.v[m] = p[P_ADEP] * p[P_GIP] * v.ion[m];
-                    st.Gi[m] = Ypass * p[P_GIP] * v.ion[m];
+                    st.Gi[m] = Ypass * p[P_GIP] * ion_removing(&v, m, p[P_PANG]);
                 }
                 for (int q = 0; q < (int)p[P_NPREC]; q++) {
                     const double *r = p + P_N + 3 * q;     /* flux, sticking, volume */
@@ -601,7 +628,7 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
              * surface etch for the rest of it */
             double vpot = 0.0;
             for (int m = 0; m < s.n; m++) {
-                st.v[m] = Ypoly * st.Gi[m] + p[P_BPOLY] * st.G[m];
+                st.v[m] = Ypoly * st.Gp[m] + p[P_BPOLY] * st.G[m];
                 vpot = dmax(vpot, dmax(st.v[m], bare_rate(p, &st, m, s.mat[m], Ysi, Ymask)));
                 vpot = dmax(vpot, bare_rate(p, &st, m, 0, Ysi, Ymask));
             }
@@ -648,6 +675,7 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
     free(queue);
     surf_free(&s); views_free(&v);
     free(st.G); free(st.Gi); free(st.theta); free(st.keep); free(st.v);
+    free(st.Gp); free(st.Gm);
 }
 
 /* the grid with rows of void above it for the film on the mask's top (its
