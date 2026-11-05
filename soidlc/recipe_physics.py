@@ -90,6 +90,21 @@ class BoschProcess:
                 pl.etch(_COIL0, _PRES0, _SF6_0, _BIAS0),
                 pl.passivation(_COIL0, _PRES0, _C4F8_0))
 
+    def fluxes(self, **kw):
+        """The recipe's two plasmas as the input of the flux-driven model
+        (:class:`soidlc.etch.BoschFluxes`; needs ``plasma``): pass it to
+        ``etch.simulate(..., fluxes=...)``.  ``kw`` goes to BoschFluxes
+        (``surface``, ``rays``, ...)."""
+        from .etch import BoschFluxes
+        if self.plasma is None:
+            raise RuntimeError("recipe: the flux-driven model needs a plasma "
+                               "(BoschProcess(plasma=FermaPlasma()))")
+        pl = self.plasma
+        return BoschFluxes.from_plasmas(
+            pl.etch(self.coil_w, self.pressure, self.sf6, self.bias_w),
+            pl.passivation(self.coil_w, self.pressure, self.c4f8),
+            t_etch=self.t_etch, t_pass=self.t_pass, cycles=self.cycles, **kw)
+
     def _drivers(self) -> Dict[str, float]:
         """The drive terms of the recipe relative to the reference recipe's:
         the vertical (ion-assisted) etch rate, the isotropic/anisotropic

@@ -23,7 +23,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _SO = os.path.join(_HERE, "etch_core.so")
 # shared level-set core + per-process velocity fields, one shared library
 _SRCS = [os.path.join(_HERE, f)
-         for f in ("levelset.c", "bosch.c", "wet.c", "corner.c")]
+         for f in ("levelset.c", "bosch.c", "wet.c", "corner.c", "drie.c")]
 _HDR = os.path.join(_HERE, "levelset.h")
 _LIB = None
 
@@ -55,6 +55,11 @@ def _load_lib():
             ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double,
             ctypes.c_int, ctypes.c_int, ctypes.c_double,
             ctypes.c_double, ctypes.c_double, ctypes.c_int]
+        lib.drie_run.restype = None
+        lib.drie_run.argtypes = [
+            ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_int, ctypes.c_int, ctypes.c_double, ctypes.c_int,
+            ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double)]
         _LIB = lib
     return _LIB
 
@@ -82,6 +87,145 @@ class BoschRecipe:
 
 
 @dataclass
+class SurfaceKinetics:
+    """Surface parameters of the flux-driven Bosch model (``drie.c``), SI.
+
+    Silicon is etched through adsorbed F as on Ferma's wafer (Belen, Gomez,
+    Kiehlbauch, Cooperberg & Aydil, J. Vac. Sci. Technol. A 23, 99 (2005)),
+    so an open flat wafer etches at the rate Ferma reports.  The fluorocarbon
+    film and the mask follow Kokkoris, Tserepi, Boudouvis & Gogolides, J. Vac.
+    Sci. Technol. A 22, 1896 (2004) (the set Ertl & Selberherr, Microelectron.
+    Eng. 87, 20 (2010) and ViennaPS's Bosch example use): volumes per
+    arriving particle and sticking probabilities.  Their ion yields are taken
+    at ``e_ref`` and scaled with sqrt(E) - sqrt(``e_th_ion``) -- both energies
+    are assumptions, not from that paper."""
+    f_sticking: float = 0.7          # F on the free silicon sites
+    thermal: float = 3e21            # F m^-2 s^-1 removed at full coverage (SiF4)
+    ion_a: float = 7.0               # Si per ion per sqrt(eV) at full coverage (SiF2)
+    ion_eth: float = 15.0            # eV, silicon's threshold
+    alpha_poly: float = 125e-30      # m^3 of film per ion (at e_ref)
+    beta_poly: float = 0.03e-30      # m^3 of film per F
+    alpha_mask: float = 13.5e-30     # m^3 of mask per ion (at e_ref)
+    beta_mask: float = 0.045e-30     # m^3 of mask per F
+    e_ref: float = 100.0             # eV at which alpha_poly, alpha_mask hold
+    e_th_ion: float = 15.0           # eV, the film's and the mask's threshold
+    beta_dep: float = 0.5e-30        # m^3 of film per CFx (passivation step)
+    alpha_dep: float = 10e-30        # m^3 of film per ion (passivation step)
+    stick_dep: float = 0.1           # CFx lost per hit (passivation step)
+    stick_poly: float = 0.1          # F lost on the film per hit
+    stick_mask: float = 0.2          # F lost on the mask (and the stop layer)
+    ion_sigma_deg: float = 2.0       # spread of the ions' angles
+    n_si: float = 4.99e28            # silicon atoms per m^3
+
+
+@dataclass
+class BoschFluxes:
+    """What the plasma delivers to an open flat wafer in each step of the
+    cycle (SI units, energies in eV), and the cycle's timing -- the input of
+    the flux-driven model, e.g. from :meth:`BoschProcess.fluxes`."""
+    f_flux: float                    # F, etch step, m^-2 s^-1
+    ion_flux: float                  # positive ions, etch step
+    ion_energy: float                # their mean energy at the wafer, eV
+    film_flux: float                 # film-forming CFx, passivation step
+    pass_ion_flux: float             # positive ions, passivation step
+    t_etch: float = 7.0              # s
+    t_pass: float = 5.0              # s
+    cycles: int = 40
+    surface: SurfaceKinetics = field(default_factory=SurfaceKinetics)
+    # the energy in silicon's ion yield (eV), when it differs from the mean
+    # (the yield averaged over the ions' energy distributions); None: the mean
+    si_energy: Optional[float] = None
+    rays: int = 64                   # neutral rays per surface point
+    ion_angles: int = 11             # ion directions per surface point
+    cfl: float = 0.3                 # front advance per time step, cells
+    reinit_stride: int = 4
+
+    @classmethod
+    def from_plasmas(cls, etch, passivation, **kw) -> "BoschFluxes":
+        """The fluxes of a recipe from its two steps' plasmas
+        (:class:`soidlc.plasma.EtchPlasma`, :class:`~soidlc.plasma.PassivationPlasma`).
+
+        The F flux and silicon's ion term are those that give the plasma's
+        own etch rate and ion-driven share of the open wafer: the plasma model
+        balances the coverage with the F density at the wafer, depleted by the
+        etching, not with the F flux it reports -- so an open flat surface of
+        the feature etches exactly as the plasma's wafer does."""
+        s = kw.get("surface") or SurfaceKinetics()
+        rate, share = etch.etch_rate, etch.ion_share
+        f_flux, si_energy = etch.f_flux, None
+        if rate > 0 and 0.0 <= share < 1.0:
+            theta = 4.0 * (1.0 - share) * rate * s.n_si / s.thermal
+            if 0.0 < theta < 1.0:
+                ion_term = share * rate * s.n_si / theta       # Y Gi, Si/m^2/s
+                f_flux = theta * (s.thermal + 2.0 * ion_term) / (
+                    s.f_sticking * (1.0 - theta))
+                if etch.ion_flux > 0:
+                    si_energy = (ion_term / (s.ion_a * etch.ion_flux)
+                                 + math.sqrt(s.ion_eth)) ** 2
+        return cls(f_flux=f_flux, ion_flux=etch.ion_flux,
+                   ion_energy=etch.ion_energy,
+                   film_flux=passivation.film_flux,
+                   pass_ion_flux=passivation.ion_flux, si_energy=si_energy,
+                   **kw)
+
+    def flat_etch_rate(self) -> float:
+        """Silicon etch rate of the open flat wafer, m/s (Ferma's)."""
+        s = self.surface
+        e = self.si_energy if self.si_energy is not None else self.ion_energy
+        y = (s.ion_a * (math.sqrt(e) - math.sqrt(s.ion_eth))
+             if e > s.ion_eth else 0.0)
+        sg = s.f_sticking * self.f_flux
+        theta = sg / (sg + s.thermal + 2.0 * y * self.ion_flux)
+        return theta * (0.25 * s.thermal + y * self.ion_flux) / s.n_si
+
+    def flat_film(self) -> float:
+        """Film one passivation step leaves on the open flat wafer, m."""
+        s = self.surface
+        return (s.beta_dep * self.film_flux
+                + s.alpha_dep * self.pass_ion_flux) * self.t_pass
+
+    def flat_strip(self) -> float:
+        """Rate at which the etch step wears the film off the open flat
+        wafer, m/s (the ions and F)."""
+        s = self.surface
+        y = (s.alpha_poly * (math.sqrt(self.ion_energy) - math.sqrt(s.e_th_ion))
+             / (math.sqrt(s.e_ref) - math.sqrt(s.e_th_ion))
+             if self.ion_energy > s.e_th_ion else 0.0)
+        return y * self.ion_flux + s.beta_poly * self.f_flux
+
+    def breakthrough(self) -> float:
+        """Time the etch step takes to clear one passivation step's film off
+        the open flat wafer, s (inf: never)."""
+        strip = self.flat_strip()
+        return self.flat_film() / strip if strip > 0 else math.inf
+
+    def calibrated(self, breakthrough: float) -> "BoschFluxes":
+        """These fluxes with the film's deposition (``beta_dep``,
+        ``alpha_dep``) scaled so that the open flat wafer's film clears in
+        ``breakthrough`` seconds of the etch step -- the one constant to take
+        from the tool (the published volumes per particle come from another
+        reactor; the film's growth is the least transferable of them)."""
+        from dataclasses import replace
+        k = breakthrough / self.breakthrough()
+        s = replace(self.surface, beta_dep=self.surface.beta_dep * k,
+                    alpha_dep=self.surface.alpha_dep * k)
+        return replace(self, surface=s)
+
+    def _params(self):
+        s = self.surface
+        return [self.cycles, self.t_etch, self.t_pass, self.f_flux,
+                self.ion_flux, self.ion_energy, self.film_flux,
+                self.pass_ion_flux, s.f_sticking, s.thermal, s.ion_a,
+                s.ion_eth, s.alpha_poly, s.beta_poly, s.alpha_mask,
+                s.beta_mask, s.e_ref, s.e_th_ion, s.beta_dep, s.alpha_dep,
+                s.stick_dep, s.stick_poly, s.stick_mask, s.ion_sigma_deg,
+                self.rays, self.ion_angles, s.n_si, self.cfl,
+                self.reinit_stride,
+                self.si_energy if self.si_energy is not None
+                else self.ion_energy]
+
+
+@dataclass
 class EtchResult:
     phi: List[float]
     nx: int
@@ -96,10 +240,24 @@ class EtchResult:
     scallop_um: float = 0.0
     footing_um: float = 0.0
     warnings: List[str] = field(default_factory=list)   # process warnings
+    # the flux-driven model's: the open wafer's etch rate (m/s) and F
+    # coverage, the film after the first passivation step (m), when the first
+    # etch step clears it (s; -1: never), flux evaluations, time steps
+    fluxes: Optional[BoschFluxes] = None
+    diagnostics: dict = field(default_factory=dict)
 
     def report(self) -> List[str]:
         out = ["etch   Bosch level-set: %d x %d cells @ %.3f um, BOX at %.1f um"
                % (self.nx, self.nz, self.dx, self.j_box * self.dx)]
+        if self.fluxes is not None:
+            d = self.diagnostics
+            out.append(
+                "etch   from the plasma's fluxes: open Si %.0f nm/min "
+                "(F coverage %.2f), film %.1f nm per passivation step, "
+                "cleared from the bottom after %s of %.1f s"
+                % (d["etch_rate"] * 6e10, d["coverage"], d["film"] * 1e9,
+                   ("%.2f s" % d["clear_time"]) if d["clear_time"] >= 0
+                   else "never", self.fluxes.t_etch))
         for k, (x0, x1) in enumerate(self.openings):
             ar = self.depths[k] / max(self.widths[k], 1e-6)
             flag = "reached BOX" if self.reached_box[k] else \
@@ -122,17 +280,22 @@ def simulate(openings: List[Tuple[float, float]], domain_w: float,
              recipe: Optional[BoschRecipe] = None,
              mask_thick: float = 2.0, box: bool = True,
              box_at: Optional[float] = None,
-             process: Optional[object] = None) -> EtchResult:
+             process: Optional[object] = None,
+             fluxes: Optional[BoschFluxes] = None) -> EtchResult:
     """Etch a set of mask ``openings`` (list of (x0, x1) in um) into a wafer.
 
     ``domain_w`` x ``depth`` is the simulated cross-section (um); the buried
     oxide sits at ``box_at`` (default: just below the target depth).  Pass a
     :class:`~soidlc.recipe_physics.BoschProcess` as ``process`` to drive the
     etch from real machine parameters (step times, flows, pressure, powers)
-    instead of the effective ``recipe`` knobs.
+    instead of the effective ``recipe`` knobs, or the plasma's fluxes
+    (:class:`BoschFluxes`, e.g. ``BoschProcess(plasma=...).fluxes()``) as
+    ``fluxes`` for the flux-driven model: the particles' transport into the
+    feature, the passivation film and the surface kinetics in place of the
+    knobs.
     """
     proc_warnings: List[str] = []
-    if process is not None:
+    if process is not None and fluxes is None:
         recipe, proc_warnings = process.to_recipe()
     recipe = recipe or BoschRecipe()
     box_at = box_at if box_at is not None else depth
@@ -159,6 +322,23 @@ def simulate(openings: List[Tuple[float, float]], domain_w: float,
                 mask[i + nx * j] = 1
 
     lib = _load_lib()
+    if fluxes is not None:
+        if lib is None:
+            raise RuntimeError("etch: the flux-driven model needs the C kernel "
+                               "(no C compiler found)")
+        arr = (ctypes.c_double * len(phi))(*phi)
+        mk = (ctypes.c_ubyte * len(mask)).from_buffer_copy(bytes(mask))
+        prm = fluxes._params()
+        par = (ctypes.c_double * len(prm))(*prm)
+        out = (ctypes.c_double * 8)()
+        lib.drie_run(arr, mk, nx, nz, dx, j_box, par, out)
+        res = EtchResult(list(arr), nx, nz, dx, j_box, openings)
+        res.fluxes = fluxes
+        res.diagnostics = dict(etch_rate=out[0], coverage=out[1], film=out[2],
+                               clear_time=out[3], flux_evaluations=int(out[4]),
+                               steps=int(out[5]))
+        _measure(res, j0, mask_thick)
+        return res
     dt = 0.35 * dx
     n_aniso = max(1, int(round(_RATE_CAL * recipe.etch_per_cycle
                                / (recipe.r_ion * dt))))
@@ -198,18 +378,10 @@ def _measure(res: EtchResult, j0: int, mask_thick: float):
             if phi[ic + nx * j] > 0:
                 jdeep = j
         depth = (jdeep - j0) * dx
-        # measured width at mid-depth, searched only near this opening
+        # measured width at mid-depth: the void around this opening's centre
+        # (a neighbouring trench within reach is not part of it)
         jm = j0 + int((jdeep - j0) * 0.5)
-        margin = int((x1 - x0) / dx)
-        ilo = max(0, int(x0 / dx) - margin)
-        ihi = min(nx, int(x1 / dx) + margin)
-        left = right = None
-        for i in range(ilo, ihi):
-            if phi[i + nx * jm] > 0:
-                if left is None:
-                    left = i
-                right = i
-        width = ((right - left) * dx) if (left is not None) else (x1 - x0)
+        width = _row_width(res, ic, jm) or (x1 - x0)
         res.depths.append(depth)
         res.widths.append(max(width, x1 - x0))
         res.reached_box.append(jdeep >= res.j_box - 1)

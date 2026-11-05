@@ -355,7 +355,7 @@ than merely close in frequency.
 Alongside the device pipeline there is a family of feature-scale **fabrication**
 simulators — physical level-set etch models, not geometry offsets. They share a
 single C99 + OpenMP upwind-Godunov level-set core (`levelset.c`); each process
-adds only its velocity field (`bosch.c`, `wet.c`, `corner.c`), and the four
+adds only its velocity field (`bosch.c`, `drie.c`, `wet.c`, `corner.c`), and the five
 compile together into one `etch_core.so`, auto-built on first use with the
 system compiler and driven through `ctypes` (pure-Python fallback where
 practical):
@@ -385,6 +385,32 @@ practical):
   `PATH`); a run takes half a minute (passivation) to three minutes (etch: the
   sheath's particle model), so results are cached per recipe (in memory, and
   on disk with `FermaPlasma(cache_dir=...)`).
+- **Bosch DRIE from the plasma's fluxes** (`drie.c`; `etch.simulate(...,
+  fluxes=BoschProcess(plasma=FermaPlasma()).fluxes())`) — the profile from what
+  the two steps' plasmas deliver, with no effective knobs: F, the ions (their
+  flux and energy) and the film-forming CF/CF₂/CF₃ fly ballistically into the
+  feature from the plasma above (rays from every surface point; the neutrals
+  re-emitted diffusely where they do not stick, a radiosity system solved with
+  BiCGSTAB; the ions within a 2° spread). The passivation step grows a
+  fluorocarbon film from the CFx and ions that arrive; the etch step's ions
+  and F wear it down, and where it is gone silicon is etched through adsorbed F
+  as on Ferma's wafer (Belen et al., JVST A 23, 99 (2005): F sticking,
+  thermal and ion-enhanced removal) and the mask by the ions and F. The film's
+  and the mask's coefficients are the published set of Kokkoris et al., JVST A
+  22, 1896 (2004) (as in Ertl & Selberherr 2010 and ViennaPS's Bosch example).
+  RIE lag, the film's thinning at a slot's bottom, scallops, mask erosion
+  follow from the transport. `BoschFluxes.from_plasmas` takes the F flux and
+  silicon's ion term that give the plasma's own etch rate and ion-driven share,
+  so an open flat surface etches exactly as Ferma's wafer. One constant is the
+  tool's: the film's growth per CFx (the published value is another reactor's)
+  is set by `BoschFluxes.calibrated(breakthrough)`, the seconds the etch step
+  takes to clear one passivation step's film off an open surface. With the
+  published value and Ferma's fluxes the reference recipe's film (87 nm) would
+  take 14 s against a 7 s step and nothing would etch. Not modelled yet: the
+  wafer's open fraction in Ferma (its wafer is all open silicon, which depletes
+  F: 1.5 µm/min), the steps' gas switching in time, ion reflection and
+  charging, the fluorocarbon's own etching chemistry beyond the published
+  yields.
 - **Anisotropic wet etch** (`koh.py`) — KOH/TMAH bulk micromachining with an
   orientation-dependent rate: {111} planes ~100× slower meet a (100) surface at
   54.74°, so a mask opening self-organises into the classic facetted pit /
@@ -573,9 +599,10 @@ soidlc/
   cli.py         `soidlc` command-line entry point
   levelset.{c,h} shared C99+OpenMP upwind-Godunov level-set core
   bosch.c        Bosch DRIE velocity field + entry point
+  drie.c         Bosch DRIE from the plasma's fluxes (transport, film, kinetics)
   wet.c          KOH/TMAH anisotropic velocity field (2D + 3D)
   corner.c       plan-view convex-corner undercut velocity field
-                 (the three above compile together into etch_core.so)
+                 (the four above compile together into etch_core.so)
   etch.py        Bosch DRIE feature-scale simulation
   recipe_physics.py recipe params -> effective etch knobs
   plasma.py      the recipe's etch and passivation plasmas from Ferma's ICP solver
