@@ -29,12 +29,16 @@ _MASS = {"C": 12.011, "F": 18.998}
 STICKING: Dict[str, float] = {
     # with the ions removed, CF2 scatters off films from C4F8 plasmas with S =
     # 0.9 - 1.3 (IRIS: Martin & Fisher, J. Vac. Sci. Technol. A 22, 2168
-    # (2004)); with ions the film gives it off (S > 1). 1.5e-3 on a film no
+    # (2004)); with ions the film gives it off (S > 1); 1.5e-3 on a film no
     # ion reaches in Huang et al.'s model (J. Vac. Sci. Technol. A 37, 031304
-    # (2019)), ten times that where the ions activate it: the 0.014 per hit
-    # on a reactor's walls (Hikosaka, Toyoda & Sugai, Jpn. J. Appl. Phys. 32,
-    # L353 (1993); Ferma's c4f8 walls)
-    "CF2": 1.5e-3,
+    # (2019)), the 0.014 per hit on a reactor's walls the ions activate
+    # (Hikosaka, Toyoda & Sugai, Jpn. J. Appl. Phys. 32, L353 (1993); Ferma's
+    # c4f8 walls). 5e-4, inside those bounds, keeps Zhang et al.'s trench as
+    # straight as their SEM shows it (5.9 um wide at its bottom): the walls'
+    # film is what the rarely sticking radicals leave there, so the walls'
+    # angle rests on this number (0: the walls deep down unprotected, bowing;
+    # 1.5e-3: narrowing to 3.6 um)
+    "CF2": 5e-4,
     # CF3 and C3F5 have one dangling bond: they end a chain but cannot join
     # the film's network, whose precursors are CF, CF2, C2F3 and C2F4 (Zhang
     # & Kushner, J. Vac. Sci. Technol. A 19, 524 (2001)); only the sites the

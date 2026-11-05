@@ -1,0 +1,120 @@
+{
+ "ferma_icp": 1,
+ "model": "global",
+ "gas": {
+  "mechanism": "c4f8",
+  "pressure": 4.666282895,
+  "temperature": 315,
+  "feed": [
+   {
+    "species": "C4F8",
+    "sccm": 60
+   }
+  ]
+ },
+ "coil": {
+  "power": 450,
+  "frequency": 13560000,
+  "resistance": 0.5,
+  "current": 16.88170945,
+  "voltage": 2683.980007
+ },
+ "converged": true,
+ "absorbed_power": 378.7519421,
+ "ne_max": 4.976504684e+16,
+ "Te_mean": 1.874459627,
+ "species": [
+  {
+   "name": "C4F8",
+   "density": 2.334818063e+20,
+   "flux": 1.06583526e+22
+  },
+  {
+   "name": "C3F5",
+   "density": 3.758638251e+20,
+   "flux": 2.120016275e+22
+  },
+  {
+   "name": "C2F6",
+   "density": 1.875465655e+19,
+   "flux": 1.030709486e+21
+  },
+  {
+   "name": "C2F4",
+   "density": 1.977946828e+19,
+   "flux": 1.276928703e+21
+  },
+  {
+   "name": "CF4",
+   "density": 2.110694167e+20,
+   "flux": 1.452643371e+22
+  },
+  {
+   "name": "CF3",
+   "density": 5.478119927e+19,
+   "flux": 4.257686601e+21
+  },
+  {
+   "name": "CF2",
+   "density": 1.369117303e+20,
+   "flux": 1.249993325e+22
+  },
+  {
+   "name": "CF",
+   "density": 4.619925785e+18,
+   "flux": 5.356406814e+20
+  },
+  {
+   "name": "C",
+   "density": 4.544715542e+16,
+   "flux": 8.466415093e+18
+  },
+  {
+   "name": "F",
+   "density": 1.763580747e+19,
+   "flux": 2.612304765e+21
+  },
+  {
+   "name": "C3F5+",
+   "density": 8811178907000000.0,
+   "flux": 4.115706161e+17
+  },
+  {
+   "name": "C2F4+",
+   "density": 1.736576252e+16,
+   "flux": 9.248625223e+17
+  },
+  {
+   "name": "CF3+",
+   "density": 3.14889776e+16,
+   "flux": 2.009652212e+18
+  },
+  {
+   "name": "CF2+",
+   "density": 5.699355867e+16,
+   "flux": 4.257999862e+18
+  },
+  {
+   "name": "CF+",
+   "density": 6602424652000000.0,
+   "flux": 6.236909201e+17
+  },
+  {
+   "name": "F+",
+   "density": 57392212790000.0,
+   "flux": 6901522885000000.0
+  },
+  {
+   "name": "F-",
+   "density": 7.155424772e+16,
+   "flux": 0
+  }
+ ],
+ "source": "soidlc/reactors/icp180_passivation.ferma with recipe_physics.CRAIGIE2002 (P_rf 450 W, 35 mTorr, C4F8 60 sccm)",
+ "wafer": {
+  "diameter": 0.15,
+  "open_fraction": 1,
+  "material": "",
+  "reacts": false
+ }
+}

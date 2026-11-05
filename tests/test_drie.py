@@ -22,7 +22,8 @@ from dataclasses import replace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from soidlc import etch, film, plasma                     # noqa: E402
-from soidlc.recipe_physics import ZHANG2023, ZHANG2023_MEASURED  # noqa: E402
+from soidlc.recipe_physics import (CRAIGIE2002, CRAIGIE2002_MEASURED,  # noqa: E402
+                                   ZHANG2023, ZHANG2023_MEASURED)
 
 _DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
@@ -56,7 +57,7 @@ def _surface_at(r, x):
 
 _MASK = 0.1    # um: thin enough not to shadow a wide opening
 # s: the film's growth fitted to Zhang et al.'s depth (TestZhang2023)
-_BREAKTHROUGH = 7.0
+_BREAKTHROUGH = 7.7
 
 
 def _etch(fluxes, openings=((5.0, 45.0),), width=50.0, depth=4.0, dx=0.05,
@@ -162,7 +163,7 @@ class TestZhang2023(unittest.TestCase):
     """The published recipe against its measurement: 100 cycles etch a 6 um
     wide opening under 6 um of AZ4620 to 30.72 um, with 70 - 80 nm scallops
     (the paper gives no angle of the Bosch trench's walls).  The film's
-    growth is the one fitted constant (a breakthrough of 7.0 s, to the
+    growth is the one fitted constant (a breakthrough of 7.7 s, to the
     depth); the scallops follow from the film's radicals, each with its
     measured sticking."""
 
@@ -175,7 +176,8 @@ class TestZhang2023(unittest.TestCase):
 
     def test_scallops(self):
         # the wall's peak to valley over each cycle's advance, along the
-        # middle 70 % of the depth after 12 cycles on 25 nm cells: 75 nm
+        # middle 70 % of the depth after 12 cycles on 25 nm cells, averaged
+        # over the cycles (each is a whole number of cells): 72 nm
         f = _reference(cycles=12).calibrated(_BREAKTHROUGH)
         dx = 0.025
         r = etch.simulate([(10.0, 16.0)], domain_w=26.0, depth=6.2, dx=dx,
@@ -190,9 +192,9 @@ class TestZhang2023(unittest.TestCase):
             if len(w) > 2:
                 ripple.append(max(w) - min(w))
             z0 += period
-        ripple.sort()
-        self.assertGreater(ripple[len(ripple) // 2], 0.06)
-        self.assertLess(ripple[len(ripple) // 2], 0.09)
+        mean = sum(ripple) / len(ripple)
+        self.assertGreater(mean, 0.06)
+        self.assertLess(mean, 0.09)
 
     def test_open_silicon_etches_faster_than_a_bare_wafer(self):
         # the plasma's own numbers: 1.3 % of the wafer open
@@ -286,6 +288,55 @@ class TestAgainstViennaPS(unittest.TestCase):
         rate = (270e-30 * 4.375e19 + 0.9e-30 * 1e23)
         self.assertAlmostEqual(r.diagnostics["etch_rate"] / rate, 1.0,
                                places=9)
+
+
+class TestCraigie2002(unittest.TestCase):
+    """The walls' angle against the passivation step's length on another
+    Plasmalab System100 recipe (recipe_physics.CRAIGIE2002, its plasmas
+    Ferma's: tests/data/craigie_*), with the film's growth scaled as Zhang et
+    al.'s fit (nothing fitted to it): with 60 sccm of C4F8, 7 s of passivation
+    leave the walls bowing (89.4 degrees measured) and 12 s narrowing (90.5).
+    The model's swing is larger (25 nm cells: 87.8 and 91.7; on 12.5 nm cells
+    88.8 and 91.7), and 5 s break through the walls' film where the
+    measurement still shows 89 degrees: the README."""
+
+    @staticmethod
+    def _angle(t_pass):
+        c = CRAIGIE2002
+        zhang = _reference(cycles=1)
+        k = zhang.calibrated(_BREAKTHROUGH).growth_scale(zhang)
+        f = etch.BoschFluxes.from_plasmas(
+            plasma.etch_plasma(_summary("craigie_etch")),
+            plasma.passivation_plasma(_summary("craigie_passivation")),
+            t_etch=c["t_etch"], t_pass=t_pass,
+            cycles=int(round(60 * c["minutes"] / (c["t_etch"] + t_pass))))
+        f = f.growth_scaled(k)
+        dx, mask = 0.25, c["mask_um"]
+        r = etch.simulate([(25.0, 75.0)], domain_w=100.0, depth=130.0, dx=dx,
+                          fluxes=f, box_at=130.0, mask_thick=mask)
+        j0 = int(round((mask + 2 * dx) / dx))
+
+        def width(z):
+            j = int(round(j0 + z / dx))
+            row = r.phi[r.nx * j: r.nx * (j + 1)]
+            a = b = int(50.0 / dx)
+            while a > 0 and row[a - 1] > 0:
+                a -= 1
+            while b < r.nx - 1 and row[b + 1] > 0:
+                b += 1
+            return (b - a + 1) * dx
+        z1, z2 = 0.1 * r.depths[0], 0.85 * r.depths[0]
+        return 90 + math.degrees(math.atan((width(z1) - width(z2))
+                                           / (2 * (z2 - z1))))
+
+    def test_angle_against_the_passivation(self):
+        m = CRAIGIE2002_MEASURED["angle_vs_t_pass"]
+        self.assertLess(m[7], 90.0)
+        self.assertGreater(m[12], 90.0)
+        bowing, narrowing = self._angle(7.0), self._angle(12.0)
+        self.assertLess(bowing, 90.0)
+        self.assertGreater(narrowing, 90.0)
+        self.assertLess(narrowing - bowing, 5.0)
 
 
 class TestCalibration(unittest.TestCase):

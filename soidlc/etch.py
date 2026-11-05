@@ -219,8 +219,12 @@ class BoschFluxes:
         number: the radicals' fluxes and the film's density as much as the
         sticking).  The scale (:meth:`growth_scale`) says how far the
         plasma's fluxes and the measured sticking are from the tool's."""
+        return self.growth_scaled(breakthrough / self.breakthrough())
+
+    def growth_scaled(self, k: float) -> "BoschFluxes":
+        """These fluxes with every radical's film and the ions' scaled by k
+        (e.g. another recipe's :meth:`growth_scale` on the same tool)."""
         from dataclasses import replace
-        k = breakthrough / self.breakthrough()
         s = replace(self.surface, alpha_dep=self.surface.alpha_dep * k)
         pre = tuple(replace(p, volume=p.volume * k) for p in self.precursors)
         return replace(self, surface=s, precursors=pre)

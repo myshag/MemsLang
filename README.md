@@ -406,10 +406,11 @@ practical):
   The film's radicals are Ferma's species, each with the probability that
   one arriving at the film joins it, measured where there are measurements
   (`soidlc/film.py`), on a feature's walls, which no ions reach: CF 0.5
-  (IRIS, Cuddy, Blechle & Fisher, IJMS 330, 46 (2012)), CF₂ 1.5e-3 (the
+  (IRIS, Cuddy, Blechle & Fisher, IJMS 330, 46 (2012)), CF₂ 5e-4 (the
   largest flux hardly builds the film: it scatters with S = 0.9 - 1.3 with the
-  ions removed, IRIS, Martin & Fisher, JVST A 22, 2168 (2004); Huang et al.'s
-  model value, ten times less than on the ion-activated walls of a reactor),
+  ions removed, IRIS, Martin & Fisher, JVST A 22, 2168 (2004); 1.5e-3 in Huang
+  et al.'s model, 0.014 on the ion-activated walls of a reactor; 5e-4 keeps
+  Zhang et al.'s trench as straight as their SEM shows it),
   CF₃ and C₃F₅ 0 (one dangling bond: they cannot join the film's network,
   Zhang & Kushner, JVST A 19, 524 (2001)), C 0.5 and C₂F₄ 1e-3 (not measured;
   model values). A radical that sticks readily coats the top of a feature, one
@@ -440,28 +441,58 @@ practical):
   1.3). Ferma's C₄F₈ walls take up CF and C as film-coated walls do (Ferma
   #127, against measured CF, CF₂ and C densities); with inert walls its CF
   was 12 and its C 100 times higher here. The plasma's radicals with their
-  measured sticking grow 124 nm of film per passivation step (CF 88 % of it);
-  a breakthrough of 7.0 s fits the depth, 74 nm per step, 0.6 of it (with
+  measured sticking grow 117 nm of film per passivation step (CF 94 % of it);
+  a breakthrough of 7.7 s fits the depth, 82 nm per step, 0.7 of it (with
   inert walls 0.04):
 
   | | model | measured |
   |---|---|---|
-  | depth after 100 cycles (fitted) | 30.9 µm | 30.72 µm |
-  | scallops (peak to valley per cycle, 25 nm cells) | 75 nm | 70 - 80 nm |
-  | advance per cycle, first 12 cycles | 413 nm | 307 nm (mean of 100) |
-  | walls 1 / 10 / 20 / 28 µm down | 5.4 / 5.0 / 4.2 / 3.6 µm (1.9° narrowing) | not given (6 µm opening) |
+  | depth after 100 cycles (fitted) | 30.8 µm | 30.72 µm |
+  | scallops (peak to valley per cycle, mean over the cycles, 25 nm cells) | 72 nm | 70 - 80 nm |
+  | advance per cycle, first 12 cycles | 396 nm | 307 nm (mean of 100) |
+  | walls 1 / 10 / 20 / 28 µm down (CF₂'s sticking set to it) | 5.2 / 5.0 / 4.7 / 4.8 µm | 5.9 µm at the bottom (fig. 4b) |
 
   The scallops follow from the radicals' sticking. With one radical of the
   published film growth sticking 0.1 everywhere (Kokkoris et al.'s), the
   vertical mask walls gained 33 nm of film a cycle, closed the opening and
   stopped the trench at 6 µm: F's measured removal and the few ions reaching
   a vertical wall cannot take it off, so the walls' film is what the rarely
-  sticking radicals leave there. The taper rests on them: with C₃F₅ and CF₃
-  at the 1e-3 of the models the trench is 2.0 µm wide 28 µm down, without
-  C₃F₅ and C₂F₄ 4.6 µm (a breakthrough of 6 s, 33.7 µm deep); the paper gives no angle of
-  the Bosch trench's walls to check it against. Not modelled: the steps' gas
-  switching in time, charging, the 5 sccm admixtures and the passivation
-  step's 10 W of bias.
+  sticking radicals leave there, and the walls' angle rests on them: CF₂ at
+  0 leaves the walls deep down unprotected (the trench bows to 10 µm wider),
+  at 1.5e-3 it narrows to 3.6 µm, and 5e-4 keeps it straight (fig. 4b shows
+  5.9 µm at its bottom). Not modelled: the steps' gas switching in time,
+  charging, the 5 sccm admixtures and the passivation step's 10 W of bias.
+
+  **The walls' angle against the passivation** (`recipe_physics.CRAIGIE2002`,
+  `TestCraigie2002`): Craigie et al., JVST B 20, 2229 (2002), an Oxford
+  Plasmalab System100, 50 µm trenches under 10 µm of resist, 45 min of 15 s
+  SF₆ steps (85 sccm, 30 mTorr, 450 W, 30 W of bias) and C₄F₈ steps (35
+  mTorr, 450 W), the angle measured against the passivation step's length
+  and C₄F₈ flow. Its plasmas are Ferma's on the ICP180 reactors (10 % of the
+  wafer open: an assumption), the film's growth scaled as Zhang et al.'s fit,
+  nothing fitted to it. Degrees inside the silicon from the wafer's surface,
+  above 90 narrowing downwards:
+
+  | C₄F₈ 60 sccm, passivation | 5 s | 7 s | 10 s | 12 s | 15 s |
+  |---|---|---|---|---|---|
+  | measured | 88.9 | 89.4 | 89.75 | 90.5 | 90.6 |
+  | model, 25 nm cells | the walls' film breaks through | 87.8 | 90.2 | 91.7 | 93.8 |
+  | model, 12.5 nm cells | | 88.8 | 90.7 | 91.7 | |
+
+  | passivation 10 s, C₄F₈ | 15 sccm | 20 | 30 | 60 | 80 |
+  |---|---|---|---|---|---|
+  | measured | 87.0 | 89.2 | 88.9 | 89.75 | 89.85 |
+  | model, 25 nm cells | 85.9 | 86.9 (12.5 nm: 88.0) | 88.6 | 90.2 | 90.8 |
+
+  The trends and where the walls turn vertical (10 s and 60 sccm; measured
+  11 - 12 s and 50 sccm) come out without a fit; the model's walls swing two
+  to three times more than the measured, and 5 s of passivation break through
+  their film where the measurement still shows 89 degrees: the balance on
+  the walls is finer here than on the tool (candidates: the fluorocarbon the
+  gas switching leaves in the etch step, the passivation step's 15 W of bias,
+  the ions reflected onto the walls). The angle needs cells of 125 nm or less
+  (at 500 nm the 20 sccm case narrows to 95.7 degrees). Ferma's global model
+  does not converge for 5 and 10 sccm of C₄F₈ at 450 W.
   **Against ViennaPS** (`tests/test_drie.py::TestAgainstViennaPS`): its Bosch
   example (Ertl & Selberherr 2010, the same Kokkoris et al. coefficients) in
   2D, run in ViennaPS 4.7.0 on a 25 nm grid; here with silicon's linear law

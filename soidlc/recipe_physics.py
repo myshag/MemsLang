@@ -239,7 +239,29 @@ ZHANG2023 = dict(t_etch=8.0, t_pass=10.0, sf6=100.0, c4f8=100.0,
 # wafer, 1.3 % of it) under 6 um of AZ4620, 30.72 um deep after 100 cycles
 # (30 min: 1.02 um/min, 0.307 um per cycle), scallops 70 - 80 nm
 ZHANG2023_MEASURED = dict(width_um=6.0, mask_um=6.0, open_fraction=0.013,
-                          cycles=100, depth_um=30.72, scallop_nm=(70.0, 80.0))
+                          cycles=100, depth_um=30.72, scallop_nm=(70.0, 80.0),
+                          bottom_width_um=5.9)  # fig. 4b, read off the SEM
+
+# Another, with the walls' angle against the passivation: Craigie, Sheehan,
+# Johnson, Burkett, Moll & Knowlton, "Polymer thickness effects on Bosch etch
+# profiles", J. Vac. Sci. Technol. B 20, 2229 (2002), table I: an Oxford
+# Plasmalab System100 (its source, 180 or 380, is not given), 15 C, 50 um
+# trenches under 10 um of AZ P4620, 45 min of 15 s etch steps (SF6 85 sccm,
+# 30 mTorr, 450 W, 30 W of bias) and passivation steps (C4F8 at 35 mTorr,
+# 450 W and 15 W of bias, the bias left out here).  Its plasma: FermaPlasma
+# with plasma.ICP180_ETCH (f_open 10 %: an assumption, the pattern is not
+# given) and plasma.ICP180_PASSIVATION.
+CRAIGIE2002 = dict(t_etch=15.0, sf6=85.0, pressure=30.0, pass_pressure=35.0,
+                   coil_w=450.0, bias_w=30.0, minutes=45.0, width_um=50.0,
+                   mask_um=10.0, open_fraction=0.10)
+# the walls' angle (degrees inside the silicon from the wafer's surface, above
+# 90 narrowing downwards), read off figs. 8 (60 sccm of C4F8; the passivation
+# step's seconds) and 7 (10 s; the C4F8 sccm)
+CRAIGIE2002_MEASURED = dict(
+    angle_vs_t_pass={5: 88.95, 6: 88.86, 7: 89.37, 8: 89.43, 9: 89.44, 10: 89.75,
+                     11: 89.64, 12: 90.53, 15: 90.63},
+    angle_vs_c4f8={5: 83.5, 10: 85.0, 15: 87.0, 20: 89.2, 30: 88.9, 50: 90.0,
+                   60: 89.75, 70: 89.9, 80: 89.85})
 
 
 def zhang2023(**kw) -> BoschProcess:
