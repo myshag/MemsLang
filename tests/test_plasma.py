@@ -1,12 +1,12 @@
 """Tests for the plasma physics of a Bosch recipe (soidlc.plasma) and the
-recipe physics driven by it.
+feature model's input made from it (BoschProcess.fluxes).
 
 The summaries in tests/data are ferma_icp's for the reference recipe
-(soidlc/reactors, trimmed to what soidlc reads).  The recipe physics is
+(soidlc/reactors, trimmed to what soidlc reads).  BoschProcess.fluxes is
 checked with a stand-in plasma whose fluxes and energies move with the recipe
-the way the discharge's do, so the mapping is tested without the solver; the
-solver itself runs only with MEMSLANG_FERMA_TESTS=1 and the binaries in FERMA
-and FERMA_ICP (a few minutes per recipe).
+the way the discharge's do, so it is tested without the solver; the solver
+itself runs only with MEMSLANG_FERMA_TESTS=1 and the binaries in FERMA and
+FERMA_ICP (a few minutes per recipe).
 """
 import json
 import math
@@ -110,49 +110,46 @@ class _StandIn:
             else 124.0 * math.sqrt(bias_w / 15.0))
 
 
-class TestRecipeFromPlasma(unittest.TestCase):
-    def _rec(self, **kw):
-        return BoschProcess(plasma=_StandIn(), **kw).to_recipe()[0]
+class TestRecipeFluxes(unittest.TestCase):
+    """BoschProcess.fluxes: the recipe's two plasmas as the feature model's
+    input."""
 
-    def test_reference_matches_power_laws(self):
-        # every drive term is relative to the reference recipe, so the
-        # reference maps onto the same knobs with or without the plasma
-        a, wa = BoschProcess(plasma=_StandIn()).to_recipe()
-        b, wb = BoschProcess().to_recipe()
-        for k in ("etch_per_cycle", "r_iso", "passivation", "scallop_um",
-                  "selectivity", "footing", "bow"):
-            self.assertAlmostEqual(getattr(a, k), getattr(b, k), places=12)
-        self.assertEqual(wa, wb)
+    def _f(self, **kw):
+        return BoschProcess(plasma=_StandIn(), **kw).fluxes()
 
-    def test_bias_deepens_and_lowers_selectivity(self):
-        lo = self._rec(bias_w=10)
-        hi = self._rec(bias_w=40)
-        self.assertGreater(hi.etch_per_cycle, lo.etch_per_cycle)
-        self.assertLess(hi.selectivity, lo.selectivity)
-        self.assertGreater(hi.footing, lo.footing)
-        self.assertLess(hi.r_iso, lo.r_iso)
+    def test_the_cycle_is_the_recipes(self):
+        f = self._f(t_etch=9.0, t_pass=4.0, cycles=12)
+        self.assertEqual((f.t_etch, f.t_pass, f.cycles), (9.0, 4.0, 12))
 
-    def test_passivation_balance(self):
-        lo = self._rec(c4f8=60, t_pass=2)
-        hi = self._rec(c4f8=160, t_pass=9)
-        self.assertGreater(hi.passivation, lo.passivation)
+    def test_the_open_wafer_etches_at_the_plasmas_rate(self):
+        e = _StandIn().etch(600, 30, 130, 15)
+        self.assertAlmostEqual(self._f().flat_etch_rate() / e.etch_rate, 1.0,
+                               places=9)
+
+    def test_bias_raises_the_ions_energy(self):
+        self.assertGreater(self._f(bias_w=40).ion_energy,
+                           self._f(bias_w=10).ion_energy)
+        # a measured self-bias in place of the power
+        self.assertEqual(self._f(bias_v=110.0).ion_energy, 115.0)
+
+    def test_more_c4f8_more_film(self):
+        self.assertGreater(self._f(c4f8=160, t_pass=9).flat_film(),
+                           self._f(c4f8=60, t_pass=2).flat_film())
 
     def test_passivation_bias_thins_the_film(self):
         # the passivation's ions wear the open wafer's film down
-        lo = self._rec(pass_bias_w=15)
-        hi = self._rec()
-        self.assertLess(lo.passivation, hi.passivation)
+        self.assertLess(self._f(pass_bias_w=15).flat_film(),
+                        self._f().flat_film())
 
-    def test_pressure_raises_isotropy(self):
-        lo = self._rec(pressure=20)
-        hi = self._rec(pressure=80)
-        self.assertGreater(hi.r_iso, lo.r_iso)
-        self.assertGreater(hi.bow, lo.bow)
+    def test_needs_a_plasma(self):
+        with self.assertRaises(RuntimeError):
+            BoschProcess().fluxes()
 
     def test_summary_reports_the_plasmas(self):
         lines = BoschProcess(plasma=_StandIn()).summary()
         self.assertTrue(any(s.startswith("plasma: etch step") for s in lines))
         self.assertTrue(any(s.startswith("plasma: passivation") for s in lines))
+        self.assertEqual(len(BoschProcess().summary()), 1)
 
 
 class TestCache(unittest.TestCase):
@@ -211,10 +208,10 @@ class TestFermaSolver(unittest.TestCase):
         self.assertGreater(hot.ion_share, ref.ion_share)
         d = p.passivation(600, 30, 100)
         self.assertGreater(film.growth(film.precursors(d.radicals)), 0.0)
-        r, _ = BoschProcess(plasma=p, bias_w=40).to_recipe()
-        r0, _ = BoschProcess(plasma=p).to_recipe()
-        self.assertGreater(r.etch_per_cycle, r0.etch_per_cycle)
-        self.assertLess(r.selectivity, r0.selectivity)
+        f = BoschProcess(plasma=p, bias_w=40).fluxes()
+        f0 = BoschProcess(plasma=p).fluxes()
+        self.assertGreater(f.flat_etch_rate(), f0.flat_etch_rate())
+        self.assertGreater(f.flat_strip(), f0.flat_strip())
 
 
 if __name__ == "__main__":

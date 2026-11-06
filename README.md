@@ -355,39 +355,26 @@ than merely close in frequency.
 Alongside the device pipeline there is a family of feature-scale **fabrication**
 simulators — physical level-set etch models, not geometry offsets. They share a
 single C99 + OpenMP upwind-Godunov level-set core (`levelset.c`); each process
-adds only its velocity field (`bosch.c`, `drie.c`, `wet.c`, `corner.c`), and the five
+adds only its velocity field (`drie.c`, `wet.c`, `corner.c`), and the four
 compile together into one `etch_core.so`, auto-built on first use with the
-system compiler and driven through `ctypes` (pure-Python fallback where
-practical):
+system compiler and driven through `ctypes`:
 
-- **Bosch DRIE** (`etch.py`) — time-multiplexed deep reactive-ion etch of the
-  structural layer. A polymer/passivation field protects sidewalls while
-  directional ions drill the trench bottom, reproducing scalloping, ARDE /
-  RIE-lag (from a ray-cast sky-visibility factor), footing/notching at the
-  buried oxide, and positive/negative taper & bowing.
-- **Recipe physics** (`recipe_physics.py`) — a semi-empirical map from real
-  recipe parameters (SF₆/C₄F₈ flows, coil/bias powers, pressure, step times,
-  cycle count) onto the effective etch knobs, with calibratable coefficients and
-  process-window warnings (grass risk, mask-selectivity loss).
-- **Plasma physics of the recipe** (`plasma.py`) — the same map driven by the
-  discharges instead of power laws: `BoschProcess(plasma=FermaPlasma())` runs
-  each step of the cycle as a steady discharge of a planar-coil ICP reactor in
-  [Ferma](https://github.com/AIOS2/ferma)'s ICP solver (`ferma build -p ...`,
-  `ferma mesh`, `ferma_icp`; the reactor models are `soidlc/reactors/*.ferma`):
-  the etch step (SF₆, RF bias on the wafer) gives the silicon etch rate, its
-  thermal/ion-driven split, the F flux and the ions' energy at the wafer; the
-  passivation step (c-C₄F₈) the CF/CF₂/CF₃ flux that deposits the film. The
-  vertical rate follows the etch rate, the isotropic/anisotropic balance the
-  thermal over the ion-driven share, the passivation the film flux per step
-  against the F flux per step, selectivity and footing the ions' energy -- each
-  relative to the reference recipe's discharges, so the calibration constants
-  keep their meaning. The binaries come from `FERMA` and `FERMA_ICP` (or
-  `PATH`); a run takes half a minute (passivation) to three minutes (etch: the
-  sheath's particle model), so results are cached per recipe (in memory, and
-  on disk with `FermaPlasma(cache_dir=...)`).
-- **Bosch DRIE from the plasma's fluxes** (`drie.c`; `etch.simulate(...,
-  fluxes=BoschProcess(plasma=FermaPlasma()).fluxes())`) — the profile from what
-  the two steps' plasmas deliver, with no effective knobs. F, the ions (their
+- **A Bosch recipe and its plasmas** (`recipe_physics.py`, `plasma.py`) — a
+  recipe in machine units (`BoschProcess`: step times, SF₆/C₄F₈ flows,
+  pressures, coil and bias powers or the measured bias voltages, cycles);
+  `BoschProcess(plasma=FermaPlasma()).fluxes()` runs each step of the cycle as
+  a steady discharge in [Ferma](https://github.com/AIOS2/ferma)'s ICP solver
+  (`ferma build -p ...`, `ferma mesh`, `ferma_icp`; the reactor models are
+  `soidlc/reactors/*.ferma`): the etch step (SF₆, RF bias on the wafer) gives
+  the silicon etch rate, its thermal/ion-driven split, the F flux and the
+  ions' energy at the wafer; the passivation step (c-C₄F₈) every radical's
+  flux, which builds the film, and its ions. The binaries come from `FERMA`
+  and `FERMA_ICP` (or `PATH`); a run takes half a minute (passivation) to
+  three minutes (etch: the sheath's particle model), so results are cached per
+  recipe (in memory, and on disk with `FermaPlasma(cache_dir=...)`).
+- **Bosch DRIE** (`etch.py`, `drie.c`; `etch.simulate(...,
+  fluxes=BoschProcess(plasma=FermaPlasma()).fluxes().calibrated(...))`) — the
+  profile from what the two steps' plasmas deliver. F, the ions (their
   flux and energy) and each of the film's radicals fly ballistically into the
   feature from the plasma above: rays from every surface point, the neutrals
   re-emitted diffusely where they do not stick (a radiosity system per
@@ -741,13 +728,12 @@ soidlc/
   render.py      pure-Python PNG software renderer
   cli.py         `soidlc` command-line entry point
   levelset.{c,h} shared C99+OpenMP upwind-Godunov level-set core
-  bosch.c        Bosch DRIE velocity field + entry point
   drie.c         Bosch DRIE from the plasma's fluxes (transport, film, kinetics)
   wet.c          KOH/TMAH anisotropic velocity field (2D + 3D)
   corner.c       plan-view convex-corner undercut velocity field
-                 (the four above compile together into etch_core.so)
+                 (they compile with levelset.c into etch_core.so)
   etch.py        Bosch DRIE feature-scale simulation
-  recipe_physics.py recipe params -> effective etch knobs
+  recipe_physics.py a Bosch recipe in machine units; published recipes
   plasma.py      the recipe's etch and passivation plasmas from Ferma's ICP solver
   reactors/      the Bosch steps' ICP reactor models (Ferma)
   koh.py         anisotropic (KOH/TMAH) wet etch, 2D + 3D
