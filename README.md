@@ -355,7 +355,7 @@ than merely close in frequency.
 Alongside the device pipeline there is a family of feature-scale **fabrication**
 simulators — physical level-set etch models, not geometry offsets. They share a
 single C99 + OpenMP upwind-Godunov level-set core (`levelset.c`); each process
-adds only its velocity field (`bosch.c`, `wet.c`, `corner.c`), and the four
+adds only its velocity field (`bosch.c`, `drie.c`, `wet.c`, `corner.c`), and the five
 compile together into one `etch_core.so`, auto-built on first use with the
 system compiler and driven through `ctypes` (pure-Python fallback where
 practical):
@@ -385,6 +385,82 @@ practical):
   `PATH`); a run takes half a minute (passivation) to three minutes (etch: the
   sheath's particle model), so results are cached per recipe (in memory, and
   on disk with `FermaPlasma(cache_dir=...)`).
+- **Bosch DRIE from the plasma's fluxes** (`drie.c`; `etch.simulate(...,
+  fluxes=BoschProcess(plasma=FermaPlasma()).fluxes())`) — the profile from what
+  the two steps' plasmas deliver, with no effective knobs. F, the ions (their
+  flux and energy) and the film-forming CF/CF₂/CF₃ fly ballistically into the
+  feature from the plasma above: rays from every surface point, the neutrals
+  re-emitted diffusely where they do not stick (a radiosity system solved with
+  BiCGSTAB), the ions within a 2° spread. The passivation step grows a
+  fluorocarbon film on every face from the CFx and ions that arrive; the etch
+  step's ions and F wear it down; where it is gone, silicon is etched through
+  adsorbed F as on Ferma's wafer (Belen et al., JVST A 23, 99 (2005): F
+  sticking, thermal and ion-enhanced removal; the thermal removal ten times
+  theirs, as Ferma's, from the unbiased etch rate of Tinck et al., Plasma
+  Process. Polym. 14, e1700018 (2017)), and a solid cell is etched
+  through any bare face, so the etchant undercuts a protected wall from below
+  (scallops). The mask is worn by the ions and F. The film's and the mask's
+  coefficients are the published set of Kokkoris et al., JVST A 22, 1896 (2004)
+  (as in Ertl & Selberherr 2010 and ViennaPS's Bosch example).
+  `BoschFluxes.from_plasmas` takes the F flux and silicon's ion term that give
+  the plasma's own etch rate and ion-driven share, so an open flat surface
+  etches exactly as Ferma's wafer. One constant is the tool's: the film's
+  growth per CFx (the published one is another reactor's), set by
+  `BoschFluxes.calibrated(breakthrough)`, the seconds the etch step takes to
+  clear one passivation step's film off an open surface. The front's speed is
+  grid-independent (a flat surface to 1e-3, a 2 µm trench to 1 % from 40 to
+  10 nm cells).
+
+  **Against a published recipe** (`recipe_physics.ZHANG2023`, `zhang2023()`):
+  Zhang et al., Micromachines 14, 846 (2023), an Oxford Plasmalab 100 ICP180,
+  700 W; 8 s of SF₆ at 40 mTorr with 25 W of bias, 10 s of C₄F₈ at 30 mTorr;
+  a 6 µm spiral trench under 6 µm of AZ4620, 1.3 % of the 6-inch wafer open.
+  Its plasmas are Ferma's for an ICP180-like reactor (`reactors/icp180_*.ferma`:
+  the tool's drawings are not published, so the source is a 180 mm tube with a
+  three-turn coil; needs Ferma's `wafer_open_fraction`): the open silicon etches
+  at 6.9 µm/min, 71 % of it without the ions (a bare wafer would take up the F:
+  1.3). With the published film growth the film (190 nm) would take 18 s to
+  clear against an 8 s step, and nothing would etch; a breakthrough of 5.9 s
+  fits the depth:
+
+  | | model | measured |
+  |---|---|---|
+  | depth after 100 cycles (fitted) | 30.7 µm | 30.72 µm |
+  | advance per cycle, first 12 cycles | 312 nm | 307 nm (mean of 100) |
+  | width | 6.0 µm | 6 µm |
+  | scallops (peak to valley, 25 nm cells) | 32 nm | 70 - 80 nm |
+
+  The scallops are under half the measured (the ten times faster thermal
+  etching has not deepened them), and the wall steps inward by about
+  0.1 µm every few cycles where the bowl's rounded corner keeps its film (the
+  ions strip it per unit area as cos θ; their reflection and the polymer's
+  angular yield are not modelled). Not modelled either: the steps' gas
+  switching in time, charging, the 5 sccm admixtures and the passivation
+  step's bias of the recipe.
+  **Against ViennaPS** (`tests/test_drie.py::TestAgainstViennaPS`): its Bosch
+  example (Ertl & Selberherr 2010, the same Kokkoris et al. coefficients) in
+  2D, run in ViennaPS 4.7.0 on a 25 nm grid; here with silicon's linear law
+  (`SurfaceKinetics.si_alpha`, `si_beta`: 270 Å³ per ion, 0.9 Å³ per F, F
+  sticking 0.2) in place of Belen's. A 2 µm trench under 0.6 µm of mask, 10
+  cycles of 5 s of film and 11 s of etching:
+
+  | | here (25 nm cells) | ViennaPS |
+  |---|---|---|
+  | 6 s of the etch step without film: depth | 0.559 µm | 0.563 µm |
+  | the same: wall 0.1 / 0.3 / 0.45 µm down, from the centre | 1.288 / 1.208 / 1.045 µm | 1.281 / 1.208 / 1.052 µm |
+  | 1 cycle: depth | 0.518 µm | 0.490 µm |
+  | 1 cycle: undercut below the mask | 0.33 µm | 0.18 µm |
+  | 10 cycles: depth | 4.56 µm | 4.46 µm |
+  | 10 cycles: mask left | 0.350 µm | 0.350 µm |
+  | 10 cycles: wall 1 / 2 / 3 / 4 µm down | 1.32 / 1.25 / 1.17 / 1.17 µm | 1.16 / 1.09 / 1.01 / 1.04 µm |
+
+  Without the film the two agree to 0.01 - 0.03 µm (the F's and ions'
+  transport and the undercut below the mask), and so do the depth and the
+  mask's wear; the trench here is 0.3 µm wider. The difference is the film:
+  ViennaPS's is a layer with a thickness (a level set over the others), and
+  its foot on the mask's wall keeps the silicon below it until the undercut
+  reaches it; here the film is a thickness per face, and the floor next to
+  the wall is bared when the rest of the floor is.
 - **Anisotropic wet etch** (`koh.py`) — KOH/TMAH bulk micromachining with an
   orientation-dependent rate: {111} planes ~100× slower meet a (100) surface at
   54.74°, so a mask opening self-organises into the classic facetted pit /
@@ -573,9 +649,10 @@ soidlc/
   cli.py         `soidlc` command-line entry point
   levelset.{c,h} shared C99+OpenMP upwind-Godunov level-set core
   bosch.c        Bosch DRIE velocity field + entry point
+  drie.c         Bosch DRIE from the plasma's fluxes (transport, film, kinetics)
   wet.c          KOH/TMAH anisotropic velocity field (2D + 3D)
   corner.c       plan-view convex-corner undercut velocity field
-                 (the three above compile together into etch_core.so)
+                 (the four above compile together into etch_core.so)
   etch.py        Bosch DRIE feature-scale simulation
   recipe_physics.py recipe params -> effective etch knobs
   plasma.py      the recipe's etch and passivation plasmas from Ferma's ICP solver

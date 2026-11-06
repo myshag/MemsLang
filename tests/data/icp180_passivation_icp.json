@@ -1,0 +1,120 @@
+{
+ "ferma_icp": 1,
+ "model": "global",
+ "gas": {
+  "mechanism": "c4f8",
+  "pressure": 3.999671053,
+  "temperature": 315,
+  "feed": [
+   {
+    "species": "C4F8",
+    "sccm": 100
+   }
+  ]
+ },
+ "coil": {
+  "power": 700,
+  "frequency": 13560000,
+  "resistance": 0.5,
+  "current": 14.24210301,
+  "voltage": 2204.499109
+ },
+ "converged": true,
+ "absorbed_power": 649.2905632,
+ "ne_max": 1.399386806e+17,
+ "Te_mean": 1.786916954,
+ "species": [
+  {
+   "name": "C4F8",
+   "density": 1.371849401e+20,
+   "flux": 6.262438543e+21
+  },
+  {
+   "name": "C3F5",
+   "density": 1.88414611e+20,
+   "flux": 1.062730742e+22
+  },
+  {
+   "name": "C2F6",
+   "density": 6.742246617e+18,
+   "flux": 3.705371795e+20
+  },
+  {
+   "name": "C2F4",
+   "density": 8.269594137e+18,
+   "flux": 5.338708791e+20
+  },
+  {
+   "name": "CF4",
+   "density": 5.272708487e+19,
+   "flux": 3.628836972e+21
+  },
+  {
+   "name": "CF3",
+   "density": 7.161898115e+19,
+   "flux": 5.566347223e+21
+  },
+  {
+   "name": "CF2",
+   "density": 2.397805899e+20,
+   "flux": 2.189177918e+22
+  },
+  {
+   "name": "CF",
+   "density": 8.845160786e+19,
+   "flux": 1.025520359e+22
+  },
+  {
+   "name": "C",
+   "density": 1.344428838e+19,
+   "flux": 2.504555565e+21
+  },
+  {
+   "name": "F",
+   "density": 1.130342558e+20,
+   "flux": 1.674320416e+22
+  },
+  {
+   "name": "C3F5+",
+   "density": 4593376485000000.0,
+   "flux": 3.800047336e+17
+  },
+  {
+   "name": "C2F4+",
+   "density": 9100629306000000.0,
+   "flux": 8.614635577e+17
+  },
+  {
+   "name": "CF3+",
+   "density": 3.777183394e+16,
+   "flux": 4.302928394e+18
+  },
+  {
+   "name": "CF2+",
+   "density": 1.099465705e+17,
+   "flux": 1.470906495e+19
+  },
+  {
+   "name": "CF+",
+   "density": 3.488273629e+16,
+   "flux": 5.924353227e+18
+  },
+  {
+   "name": "F+",
+   "density": 394696536000000.0,
+   "flux": 8.561818278e+16
+  },
+  {
+   "name": "F-",
+   "density": 5.675116252e+16,
+   "flux": 0
+  }
+ ],
+ "source": "soidlc/reactors/icp180_passivation.ferma (recipe_physics.ZHANG2023)",
+ "wafer": {
+  "diameter": 0.15,
+  "open_fraction": 1,
+  "material": "",
+  "reacts": false
+ }
+}
