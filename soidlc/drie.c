@@ -1,7 +1,6 @@
 /* Bosch DRIE of the structural layer driven by the plasma's absolute fluxes,
- * 2D x-z cross-section (z down, ions travel +z).  The flux-driven counterpart
- * of bosch.c: instead of effective knobs, each surface point gets the fluxes
- * that reach it and the surface kinetics turns them into rates.
+ * 2D x-z cross-section (z down, ions travel +z): each surface point gets the
+ * fluxes that reach it and the surface kinetics turns them into rates.
  *
  * Transport (ballistic, the feature is far below the mean free path):
  *   - neutrals (F in the etch step, each of the film's radicals in the

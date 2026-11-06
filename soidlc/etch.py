@@ -1,13 +1,15 @@
-"""Level-set Bosch / DRIE etch simulation (tier-2 process model).
+"""Level-set Bosch / DRIE etch simulation from the plasma's fluxes.
 
-Drives the C kernel (shared ``levelset.c`` core + ``bosch.c`` velocity field,
-compiled together into ``etch_core.so`` with the system gcc on first use; falls
-back to a slow pure-Python kernel if no compiler is present).
-Given a mask cross-section and a Bosch recipe it evolves the silicon etch
-front and reports the resulting profile: trench depth, sidewall scalloping,
-aspect-ratio-dependent etch (ARDE / RIE-lag), taper, and footing at the buried
-oxide.  These feed the manufacturability checks (a trench that does not reach
-the BOX leaves its region anchored, not released).
+Drives the C kernel (the shared ``levelset.c`` core and ``drie.c``, compiled
+with the other processes' velocity fields into ``etch_core.so`` with the system
+compiler on first use).  Given a mask cross-section and what the two steps'
+plasmas deliver to the wafer (:class:`BoschFluxes`, e.g. from
+:meth:`soidlc.recipe_physics.BoschProcess.fluxes`), it transports the
+particles into the feature, grows and wears the passivation film and etches
+the silicon, cycle by cycle, and reports the resulting profile: trench depth,
+sidewall scalloping, aspect-ratio-dependent etch (ARDE / RIE-lag), taper, and
+footing at the buried oxide (a trench that does not reach the BOX leaves its
+region anchored, not released).
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _SO = os.path.join(_HERE, "etch_core.so")
 # shared level-set core + per-process velocity fields, one shared library
 _SRCS = [os.path.join(_HERE, f)
-         for f in ("levelset.c", "bosch.c", "wet.c", "corner.c", "drie.c")]
+         for f in ("levelset.c", "wet.c", "corner.c", "drie.c")]
 _HDR = os.path.join(_HERE, "levelset.h")
 _LIB = None
 
@@ -50,14 +52,6 @@ def _load_lib():
                 continue
     if os.path.exists(_SO):
         lib = ctypes.CDLL(_SO)
-        lib.bosch_run.restype = None
-        lib.bosch_run.argtypes = [
-            ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_ubyte),
-            ctypes.c_int, ctypes.c_int, ctypes.c_double, ctypes.c_int,
-            ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
-            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_double,
-            ctypes.c_int, ctypes.c_int, ctypes.c_double,
-            ctypes.c_double, ctypes.c_double, ctypes.c_int]
         lib.drie_run.restype = None
         lib.drie_run.argtypes = [
             ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_ubyte),
@@ -67,28 +61,7 @@ def _load_lib():
     return _LIB
 
 
-# the band/reinit-limited scheme advances the front at ~half of V*dt per
-# cycle; this constant makes ``etch_per_cycle`` read as um/cycle
-_RATE_CAL = 2.5
-
-
 # ---------------------------------------------------------------------------
-@dataclass
-class BoschRecipe:
-    etch_per_cycle: float = 0.6     # um of vertical advance per cycle
-    cycles: int = 40
-    r_ion: float = 1.0              # anisotropic (ion) rate, relative
-    r_iso: float = 0.18             # isotropic (radical) rate, relative
-    selectivity: float = 75.0       # Si:mask etch ratio
-    footing: float = 1.5            # lateral boost at the oxide interface
-    scallop_um: float = 0.12        # lateral isotropic bulge per cycle (um)
-    passivation: float = 0.92       # sidewall protection (1 = perfect)
-    bow: float = 0.0                # depth-increasing sidewall etch: >0 gives
-                                    # negative taper / bowing, =0 positive taper
-    reinit_stride: int = 2          # reinit every N substeps (drift control)
-    arde_angles: int = 28           # rays for the visibility (ARDE) factor
-
-
 @dataclass
 class SurfaceKinetics:
     """Surface parameters of the flux-driven Bosch model (``drie.c``), SI.
@@ -300,25 +273,22 @@ class EtchResult:
     tapers: List[float] = field(default_factory=list)   # deg, + = narrowing
     scallop_um: float = 0.0
     footing_um: float = 0.0
-    warnings: List[str] = field(default_factory=list)   # process warnings
-    # the flux-driven model's: the open wafer's etch rate (m/s) and F
-    # coverage, the film after the first passivation step (m), when the first
-    # etch step clears it (s; -1: never), flux evaluations, time steps
     fluxes: Optional[BoschFluxes] = None
+    # the open wafer's etch rate (m/s) and F coverage, the film after the
+    # first passivation step (m), when the first etch step clears it (s; -1:
+    # never), flux evaluations, time steps
     diagnostics: dict = field(default_factory=dict)
 
     def report(self) -> List[str]:
+        d = self.diagnostics
         out = ["etch   Bosch level-set: %d x %d cells @ %.3f um, BOX at %.1f um"
-               % (self.nx, self.nz, self.dx, self.j_box * self.dx)]
-        if self.fluxes is not None:
-            d = self.diagnostics
-            out.append(
-                "etch   from the plasma's fluxes: open Si %.0f nm/min "
-                "(F coverage %.2f), film %.1f nm per passivation step, "
-                "cleared from the bottom after %s of %.1f s"
-                % (d["etch_rate"] * 6e10, d["coverage"], d["film"] * 1e9,
-                   ("%.2f s" % d["clear_time"]) if d["clear_time"] >= 0
-                   else "never", self.fluxes.t_etch))
+               % (self.nx, self.nz, self.dx, self.j_box * self.dx),
+               "etch   from the plasma's fluxes: open Si %.0f nm/min "
+               "(F coverage %.2f), film %.1f nm per passivation step, "
+               "cleared from the bottom after %s of %.1f s"
+               % (d["etch_rate"] * 6e10, d["coverage"], d["film"] * 1e9,
+                  ("%.2f s" % d["clear_time"]) if d["clear_time"] >= 0
+                  else "never", self.fluxes.t_etch)]
         for k, (x0, x1) in enumerate(self.openings):
             ar = self.depths[k] / max(self.widths[k], 1e-6)
             flag = "reached BOX" if self.reached_box[k] else \
@@ -337,28 +307,19 @@ class EtchResult:
 
 # ---------------------------------------------------------------------------
 def simulate(openings: List[Tuple[float, float]], domain_w: float,
-             depth: float, dx: float = 0.15,
-             recipe: Optional[BoschRecipe] = None,
+             depth: float, dx: float = 0.15, *, fluxes: BoschFluxes,
              mask_thick: float = 2.0, box: bool = True,
-             box_at: Optional[float] = None,
-             process: Optional[object] = None,
-             fluxes: Optional[BoschFluxes] = None) -> EtchResult:
-    """Etch a set of mask ``openings`` (list of (x0, x1) in um) into a wafer.
+             box_at: Optional[float] = None) -> EtchResult:
+    """Etch a set of mask ``openings`` (list of (x0, x1) in um) into a wafer
+    with what the plasma delivers (``fluxes``, e.g.
+    ``BoschProcess(plasma=...).fluxes()``, calibrated to the tool): the
+    particles' transport into the feature, the passivation film and the
+    surface kinetics, cycle by cycle.
 
-    ``domain_w`` x ``depth`` is the simulated cross-section (um); the buried
-    oxide sits at ``box_at`` (default: just below the target depth).  Pass a
-    :class:`~soidlc.recipe_physics.BoschProcess` as ``process`` to drive the
-    etch from real machine parameters (step times, flows, pressure, powers)
-    instead of the effective ``recipe`` knobs, or the plasma's fluxes
-    (:class:`BoschFluxes`, e.g. ``BoschProcess(plasma=...).fluxes()``) as
-    ``fluxes`` for the flux-driven model: the particles' transport into the
-    feature, the passivation film and the surface kinetics in place of the
-    knobs.
+    ``domain_w`` x ``depth`` is the simulated cross-section (um), under a mask
+    ``mask_thick`` thick; the buried oxide sits at ``box_at`` (default: just
+    below the target depth).
     """
-    proc_warnings: List[str] = []
-    if process is not None and fluxes is None:
-        recipe, proc_warnings = process.to_recipe()
-    recipe = recipe or BoschRecipe()
     box_at = box_at if box_at is not None else depth
     z_extent = max(depth, box_at)
     nx = max(8, int(round(domain_w / dx)))
@@ -383,46 +344,20 @@ def simulate(openings: List[Tuple[float, float]], domain_w: float,
                 mask[i + nx * j] = 1
 
     lib = _load_lib()
-    if fluxes is not None:
-        if lib is None:
-            raise RuntimeError("etch: the flux-driven model needs the C kernel "
-                               "(no C compiler found)")
-        arr = (ctypes.c_double * len(phi))(*phi)
-        mk = (ctypes.c_ubyte * len(mask)).from_buffer_copy(bytes(mask))
-        prm = fluxes._params()
-        par = (ctypes.c_double * len(prm))(*prm)
-        out = (ctypes.c_double * 8)()
-        lib.drie_run(arr, mk, nx, nz, dx, j_box, par, out)
-        res = EtchResult(list(arr), nx, nz, dx, j_box, openings)
-        res.fluxes = fluxes
-        res.diagnostics = dict(etch_rate=out[0], coverage=out[1], film=out[2],
-                               clear_time=out[3], flux_evaluations=int(out[4]),
-                               steps=int(out[5]))
-        _measure(res, j0, mask_thick)
-        return res
-    dt = 0.35 * dx
-    n_aniso = max(1, int(round(_RATE_CAL * recipe.etch_per_cycle
-                               / (recipe.r_ion * dt))))
-    # isotropic burst sized to one scallop (absolute lateral bulge per cycle)
-    n_iso = max(1, int(round(recipe.scallop_um
-                             / (recipe.r_iso * dt + 1e-9))))
-    vis_maxlen = (depth + mask_thick) * 1.2
-
-    if lib is not None:
-        arr = (ctypes.c_double * len(phi))(*phi)
-        mk = (ctypes.c_ubyte * len(mask)).from_buffer_copy(bytes(mask))
-        lib.bosch_run(arr, mk, nx, nz, dx, j_box,
-                      recipe.r_ion, recipe.r_iso, recipe.selectivity,
-                      recipe.footing, recipe.cycles, n_aniso, n_iso, dt,
-                      recipe.reinit_stride, recipe.arde_angles, vis_maxlen,
-                      recipe.passivation, recipe.bow, j0)
-        phi = list(arr)
-    else:
-        phi = _py_fallback(phi, mask, nx, nz, dx, j_box, recipe,
-                           n_aniso, n_iso, dt)
-
-    res = EtchResult(phi, nx, nz, dx, j_box, openings)
-    res.warnings = proc_warnings
+    if lib is None:
+        raise RuntimeError("etch: the Bosch model needs the C kernel "
+                           "(no C compiler found)")
+    arr = (ctypes.c_double * len(phi))(*phi)
+    mk = (ctypes.c_ubyte * len(mask)).from_buffer_copy(bytes(mask))
+    prm = fluxes._params()
+    par = (ctypes.c_double * len(prm))(*prm)
+    out = (ctypes.c_double * 8)()
+    lib.drie_run(arr, mk, nx, nz, dx, j_box, par, out)
+    res = EtchResult(list(arr), nx, nz, dx, j_box, openings)
+    res.fluxes = fluxes
+    res.diagnostics = dict(etch_rate=out[0], coverage=out[1], film=out[2],
+                           clear_time=out[3], flux_evaluations=int(out[4]),
+                           steps=int(out[5]))
     _measure(res, j0, mask_thick)
     return res
 
@@ -449,8 +384,7 @@ def _measure(res: EtchResult, j0: int, mask_thick: float):
         res.tapers.append(_taper(res, j0, ic, jdeep))
     # scallop and footing measured on the deepest (best-resolved) trench
     kd = max(range(len(res.depths)), key=lambda k: res.depths[k])
-    res.scallop_um = _scallop(res, j0, kd,
-                              res.fluxes.cycles if res.fluxes is not None else None)
+    res.scallop_um = _scallop(res, j0, kd, res.fluxes.cycles)
     res.footing_um = _footing(res, j0, kd)
 
 
@@ -504,13 +438,13 @@ def _wall_trace(res, j0, k):
     return js, xs
 
 
-def _scallop(res, j0, k, cycles=None):
+def _scallop(res, j0, k, cycles):
     """Sidewall ripple of the wall after removing its linear taper (so
     taper/bow is not counted as scalloping), over the middle 70 % of the
     depth: the undercut under the mask at the top and the bottom's rounding
-    are not scallops.  With the number of cycles known (the flux-driven
-    model), the median of the peak-to-valley within each cycle's advance --
-    a scallop's depth; else twice the RMS of the ripple."""
+    are not scallops.  The median of the peak-to-valley within each cycle's
+    advance -- a scallop's depth; twice the RMS of the ripple where a cycle
+    advances less than two cells."""
     js, xs = _wall_trace(res, j0, k)
     if js:
         top, bottom = js[0], js[-1]
@@ -550,35 +484,3 @@ def _footing(res, j0, k):
     x_mid = sum(xs[max(0, nmid - 2):nmid + 2]) / len(xs[max(0, nmid - 2):nmid + 2])
     x_bot = min(xs[-4:])                    # leftmost (most undercut) near BOX
     return max(0.0, x_mid - x_bot)
-
-
-def _py_fallback(phi, mask, nx, nz, dx, j_box, recipe, n_aniso, n_iso, dt):
-    # minimal, slow reference kernel (used only when no C compiler exists)
-    band = 2.5 * dx
-    for _c in range(recipe.cycles):
-        for mode, ns in ((0, n_aniso), (1, n_iso)):
-            for _s in range(ns):
-                new = phi[:]
-                for j in range(1, nz - 1):
-                    for i in range(1, nx - 1):
-                        k = i + nx * j
-                        if abs(phi[k]) > band or j >= j_box:
-                            continue
-                        gx = (phi[k + 1] - phi[k - 1]) * 0.5 / dx
-                        gz = (phi[k + nx] - phi[k - nx]) * 0.5 / dx
-                        gn = math.hypot(gx, gz) + 1e-12
-                        if mode == 0:
-                            rate = recipe.r_ion * max(0.0, -gz / gn)
-                        else:
-                            rate = recipe.r_iso * 0.6
-                        if mask[k]:
-                            rate /= recipe.selectivity
-                        dxm = max(phi[k] - phi[k - 1], 0.0) / dx
-                        dxp = min(phi[k + 1] - phi[k], 0.0) / dx
-                        dzm = max(phi[k] - phi[k - nx], 0.0) / dx
-                        dzp = min(phi[k + nx] - phi[k], 0.0) / dx
-                        g = math.sqrt(dxm * dxm + dxp * dxp
-                                      + dzm * dzm + dzp * dzp)
-                        new[k] = phi[k] + dt * rate * g
-                phi = new
-    return phi

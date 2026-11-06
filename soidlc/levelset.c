@@ -1,6 +1,6 @@
 /* Shared level-set primitives for the feature-scale etch simulators
  * (see levelset.h for the convention).  The per-process velocity fields and
- * entry points live in bosch.c (DRIE), wet.c (KOH/TMAH) and corner.c
+ * entry points live in drie.c (Bosch DRIE), wet.c (KOH/TMAH) and corner.c
  * (plan-view convex-corner undercut); all of them are compiled together into
  * a single etch_core.so.
  */
