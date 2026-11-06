@@ -388,28 +388,58 @@ practical):
 - **Bosch DRIE from the plasma's fluxes** (`drie.c`; `etch.simulate(...,
   fluxes=BoschProcess(plasma=FermaPlasma()).fluxes())`) — the profile from what
   the two steps' plasmas deliver, with no effective knobs. F, the ions (their
-  flux and energy) and the film-forming CF/CF₂/CF₃ fly ballistically into the
+  flux and energy) and each of the film's radicals fly ballistically into the
   feature from the plasma above: rays from every surface point, the neutrals
-  re-emitted diffusely where they do not stick (a radiosity system solved with
-  BiCGSTAB), the ions within a 2° spread. The passivation step grows a
-  fluorocarbon film on every face from the CFx and ions that arrive; the etch
-  step's ions and F wear it down; where it is gone, silicon is etched through
-  adsorbed F as on Ferma's wafer (Belen et al., JVST A 23, 99 (2005): F
-  sticking, thermal and ion-enhanced removal; the thermal removal ten times
-  theirs, as Ferma's, from the unbiased etch rate of Tinck et al., Plasma
-  Process. Polym. 14, e1700018 (2017)), and a solid cell is etched
-  through any bare face, so the etchant undercuts a protected wall from below
-  (scallops). The mask is worn by the ions and F. The film's and the mask's
-  coefficients are the published set of Kokkoris et al., JVST A 22, 1896 (2004)
-  (as in Ertl & Selberherr 2010 and ViennaPS's Bosch example).
-  `BoschFluxes.from_plasmas` takes the F flux and silicon's ion term that give
-  the plasma's own etch rate and ion-driven share, so an open flat surface
-  etches exactly as Ferma's wafer. One constant is the tool's: the film's
-  growth per CFx (the published one is another reactor's), set by
+  re-emitted diffusely where they do not stick (a radiosity system per
+  species, solved with BiCGSTAB), the ions within a 2° spread. The passivation
+  step grows a fluorocarbon film from the radicals that stick and the ions
+  that arrive; the film is a layer with its thickness (a second level set
+  over the substrate's, as in ViennaPS), so it narrows an opening and its
+  foot shields the silicon below. The etch step's ions and F wear it down;
+  where it is gone, silicon is etched through adsorbed F as on Ferma's wafer
+  (Belen et al., JVST A 23, 99 (2005): F sticking, thermal and ion-enhanced
+  removal; the thermal removal ten times theirs, as Ferma's, from the
+  unbiased etch rate of Tinck et al., Plasma Process. Polym. 14, e1700018
+  (2017)), undercutting the film above (scallops). The mask is worn by the
+  ions and F. A bias on the passivation step (`BoschProcess.pass_bias_w`, or
+  the measured self-bias `pass_bias_v`; Ferma gives the ions' energy) makes
+  its ions wear the film down as well, with the film's yield at their
+  energy, where they reach it (the open surface and the bottom, not the
+  walls): where they take more than the radicals bring, the film thins, down
+  to the substrate. The ions' yields are the same at every angle; ray by
+  ray, the film's and the mask's can instead rise off the normal as a
+  sputtering yield does (`SurfaceKinetics.poly_angular`, `mask_angular`: (1 +
+  B sin²θ) cos θ, ViennaPS's PlasmaEtching form, B 8.5 and 9.3 there; off,
+  see the Craigie comparison). The reactors carry each step's bias as `P_b` or `V_b`,
+  0 for none (needs Ferma #129: 0 as no bias, and the sheath over a wafer
+  without a chemistry of its own, as under C₄F₈).
+
+  The film's radicals are Ferma's species, each with the probability that
+  one arriving at the film joins it, measured where there are measurements
+  (`soidlc/film.py`), on a feature's walls, which no ions reach: CF 0.5
+  (IRIS, Cuddy, Blechle & Fisher, IJMS 330, 46 (2012)), CF₂ 5e-4 (the
+  largest flux hardly builds the film: it scatters with S = 0.9 - 1.3 with the
+  ions removed, IRIS, Martin & Fisher, JVST A 22, 2168 (2004); 1.5e-3 in Huang
+  et al.'s model, 0.014 on the ion-activated walls of a reactor; 5e-4 keeps
+  Zhang et al.'s trench as straight as their SEM shows it),
+  CF₃ and C₃F₅ 0 (one dangling bond: they cannot join the film's network,
+  Zhang & Kushner, JVST A 19, 524 (2001)), C 0.5 and C₂F₄ 1e-3 (not measured;
+  model values). A radical that sticks readily coats the top of a feature, one
+  that rarely does reaches its depth: the few that do decide the walls' taper. The ions' film, the film's removal and the mask's
+  are the published set of Kokkoris et al., JVST A 22, 1896 (2004) (as in
+  Ertl & Selberherr 2010 and ViennaPS's Bosch example); F's removal of the
+  film (0.03 Å³ per F) is at the measured upper bound (Standaert et al.,
+  JVST A 16, 239 (1998): no significant etching by F alone), and the ions'
+  (125 Å³ per ion at 100 eV) near the 85 Å³ measured in SF₆ (Nos, PhD thesis,
+  Université d'Orléans (2025)). `BoschFluxes.from_plasmas` takes the F flux
+  and silicon's ion term that give the plasma's own etch rate and ion-driven
+  share, so an open flat surface etches exactly as Ferma's wafer. One
+  constant is the tool's: the film's growth, set by
   `BoschFluxes.calibrated(breakthrough)`, the seconds the etch step takes to
-  clear one passivation step's film off an open surface. The front's speed is
-  grid-independent (a flat surface to 1e-3, a 2 µm trench to 1 % from 40 to
-  10 nm cells).
+  clear one passivation step's film off an open surface (it scales every
+  radical's film and the ions' alike; `growth_scale` reports by how much).
+  The front's speed is grid-independent (a flat surface to 1e-3, a 2 µm
+  trench to 1 % from 40 to 10 nm cells).
 
   **Against a published recipe** (`recipe_physics.ZHANG2023`, `zhang2023()`):
   Zhang et al., Micromachines 14, 846 (2023), an Oxford Plasmalab 100 ICP180,
@@ -419,26 +449,91 @@ practical):
   the tool's drawings are not published, so the source is a 180 mm tube with a
   three-turn coil; needs Ferma's `wafer_open_fraction`): the open silicon etches
   at 6.9 µm/min, 71 % of it without the ions (a bare wafer would take up the F:
-  1.3). With the published film growth the film (190 nm) would take 18 s to
-  clear against an 8 s step, and nothing would etch; a breakthrough of 5.9 s
-  fits the depth:
+  1.3). Ferma's C₄F₈ walls take up CF and C as film-coated walls do (Ferma
+  #127, against measured CF, CF₂ and C densities); with inert walls its CF
+  was 12 and its C 100 times higher here. The plasma's radicals with their
+  measured sticking grow 117 nm of film per passivation step (CF 94 % of it);
+  a breakthrough of 7.7 s fits the depth, 82 nm per step, 0.7 of it (with
+  inert walls 0.04):
 
   | | model | measured |
   |---|---|---|
-  | depth after 100 cycles (fitted) | 30.7 µm | 30.72 µm |
-  | advance per cycle, first 12 cycles | 312 nm | 307 nm (mean of 100) |
-  | width | 6.0 µm | 6 µm |
-  | scallops (peak to valley, 25 nm cells) | 32 nm | 70 - 80 nm |
+  | depth after 100 cycles (fitted) | 30.8 µm | 30.72 µm |
+  | scallops (peak to valley per cycle, mean over the cycles, 25 nm cells) | 72 nm | 70 - 80 nm |
+  | advance per cycle, first 12 cycles | 396 nm | 307 nm (mean of 100) |
+  | walls 1 / 10 / 20 / 28 µm down (CF₂'s sticking set to it) | 5.2 / 5.0 / 4.7 / 4.8 µm | 5.9 µm at the bottom (fig. 4b) |
 
-  The scallops are under half the measured (the ten times faster thermal
-  etching has not deepened them), and the wall steps inward by about
-  0.1 µm every few cycles where the bowl's rounded corner keeps its film (the
-  ions strip it per unit area as cos θ; their reflection and the polymer's
-  angular yield are not modelled). Not modelled either: the steps' gas
-  switching in time, charging, the 5 sccm admixtures and the passivation
-  step's bias of the recipe.
+  The scallops follow from the radicals' sticking. With one radical of the
+  published film growth sticking 0.1 everywhere (Kokkoris et al.'s), the
+  vertical mask walls gained 33 nm of film a cycle, closed the opening and
+  stopped the trench at 6 µm: F's measured removal and the few ions reaching
+  a vertical wall cannot take it off, so the walls' film is what the rarely
+  sticking radicals leave there, and the walls' angle rests on them: CF₂ at
+  0 leaves the walls deep down unprotected (the trench bows to 10 µm wider),
+  at 1.5e-3 it narrows to 3.6 µm, and 5e-4 keeps it straight (fig. 4b shows
+  5.9 µm at its bottom). Not modelled: the steps' gas switching in time,
+  charging and the 5 sccm admixtures. The passivation step's 10 W of bias is
+  left out of the table: with it (`pass_bias_w=10`; Ferma's sheath, 198 V,
+  the ions at 200 eV wearing off 3.8 of the radicals' 11.7 nm/s) a
+  breakthrough of 7.45 s fits the depth (30.8 µm), but the film's growth has
+  to be 1.43 times higher to make up for the ions, the walls (which no ions
+  reach) get that much more, and the trench narrows: 5.6 / 5.0 / 4.4 / 4.0
+  µm.
+
+  **The walls' angle against the passivation** (`recipe_physics.CRAIGIE2002`,
+  `TestCraigie2002`): Craigie et al., JVST B 20, 2229 (2002), an Oxford
+  Plasmalab System100, 50 µm trenches under 10 µm of resist, 45 min of 15 s
+  SF₆ steps (85 sccm, 30 mTorr, 450 W, 30 W of bias) and C₄F₈ steps (35
+  mTorr, 450 W), the angle measured against the passivation step's length
+  and C₄F₈ flow. Its plasmas are Ferma's on the ICP180 reactors (10 % of the
+  wafer open: an assumption), the film's growth scaled as Zhang et al.'s fit,
+  nothing fitted to it. Degrees inside the silicon from the wafer's surface,
+  above 90 narrowing downwards:
+
+  | C₄F₈ 60 sccm, passivation | 5 s | 7 s | 10 s | 12 s | 15 s |
+  |---|---|---|---|---|---|
+  | measured | 88.9 | 89.4 | 89.75 | 90.5 | 90.6 |
+  | model, 250 nm cells | the walls' film breaks through | 87.8 | 90.2 | 91.7 | 93.8 |
+  | model, 125 nm cells | | 88.8 | 90.7 | 91.7 | |
+  | model, 62.5 nm cells | | 89.2 | | 92.0 | |
+
+  | passivation 10 s, C₄F₈ | 15 sccm | 20 | 30 | 60 | 80 |
+  |---|---|---|---|---|---|
+  | measured | 87.0 | 89.2 | 88.9 | 89.75 | 89.85 |
+  | model, 250 nm cells | 85.9 | 86.9 (125 nm: 88.0) | 88.6 | 90.2 | 90.8 |
+
+  The trends and where the walls turn vertical (10 s and 60 sccm; measured
+  11 - 12 s and 50 sccm) come out without a fit. The angle needs fine cells:
+  the walls' film is 30 - 60 nm (at 500 nm the 20 sccm case narrows to 95.7
+  degrees); on 62.5 nm cells the bowing at 7 s is the measured one (89.2
+  against 89.4 degrees) and the narrowing at 12 s 1.4 degrees too much (92.0
+  against 90.5): with a thick film the walls keep more of it than on the tool
+  (the fluorocarbon the gas switching leaves in the etch step is 1 - 2 % of
+  the passivation's in Ferma's transient model, too little). The passivation
+  step's bias is not the cause: with its measured 110 V (`pass_bias_v=110`;
+  Ferma's sheath at that voltage takes 2.5 W of the tool's 15 W over the 150
+  mm wafer, its ions at 115 eV wear off 1.15 of the radicals' 7.4 nm/s) and
+  Zhang et al.'s 10 W in the calibration, the walls narrow more, as Zhang et
+  al.'s do: 90.0 and 93.8 degrees at 7 and 12 s on 250 nm cells, 90.1 and
+  93.8 on 125 nm; the swing from 7 to 12 s stays 3 - 4 degrees against the
+  measured 1.1 (the measured 150 V of the etch step, against Ferma's 296 V
+  for 30 W over the wafer, would need Zhang et al.'s voltages too, which are
+  not given). Nor is the ions' yield on the oblique film of the bottom's
+  corners: with the film's and the mask's yields rising off the normal as
+  ViennaPS's sputtering form has them (B 8.5, 9.3, ray by ray), the corners
+  clear sooner, Zhang et al.'s depth then needs a breakthrough of 11.15 s
+  (growth 1.45 times higher; their walls 5.8 / 5.0 / 5.2 / 5.0 µm), and
+  Craigie's angles come out 89.7 and 92.0 degrees at 7 and 12 s on 250 nm
+  cells, but 88.8 and 91.7 on 125 nm, as without it: the higher growth puts
+  back on the walls what the corners lose. Zhang et al.'s scallops grow to
+  103 nm (measured 70 - 80), so the yields stay the same at every angle.
+  Left: the ions reflected from the walls. On 250 nm
+  cells 5 s of passivation break through the walls' film where the
+  measurement shows 89 degrees. Ferma's global model does not converge for 5
+  and 10 sccm of C₄F₈ at 450 W.
   **Against ViennaPS** (`tests/test_drie.py::TestAgainstViennaPS`): its Bosch
-  example (Ertl & Selberherr 2010, the same Kokkoris et al. coefficients) in
+  example (Ertl & Selberherr 2010, the same Kokkoris et al. coefficients; its
+  ions' yields the same at every angle, `B_sp` -1, as here) in
   2D, run in ViennaPS 4.7.0 on a 25 nm grid; here with silicon's linear law
   (`SurfaceKinetics.si_alpha`, `si_beta`: 270 Å³ per ion, 0.9 Å³ per F, F
   sticking 0.2) in place of Belen's. A 2 µm trench under 0.6 µm of mask, 10
@@ -448,19 +543,17 @@ practical):
   |---|---|---|
   | 6 s of the etch step without film: depth | 0.559 µm | 0.563 µm |
   | the same: wall 0.1 / 0.3 / 0.45 µm down, from the centre | 1.288 / 1.208 / 1.045 µm | 1.281 / 1.208 / 1.052 µm |
-  | 1 cycle: depth | 0.518 µm | 0.490 µm |
-  | 1 cycle: undercut below the mask | 0.33 µm | 0.18 µm |
-  | 10 cycles: depth | 4.56 µm | 4.46 µm |
-  | 10 cycles: mask left | 0.350 µm | 0.350 µm |
-  | 10 cycles: wall 1 / 2 / 3 / 4 µm down | 1.32 / 1.25 / 1.17 / 1.17 µm | 1.16 / 1.09 / 1.01 / 1.04 µm |
+  | 1 cycle: depth | 0.516 µm | 0.490 µm |
+  | 1 cycle: undercut below the mask (25 / 12.5 nm cells) | 0.23 / 0.28 µm | 0.18 / 0.23 µm |
+  | 10 cycles: depth | 4.58 µm | 4.46 µm |
+  | 10 cycles: mask left | 0.352 µm | 0.350 µm |
+  | 10 cycles: wall 1 / 2 / 3 / 4 µm down | 1.14 / 1.11 / 1.03 / 1.04 µm | 1.16 / 1.09 / 1.01 / 1.04 µm |
 
   Without the film the two agree to 0.01 - 0.03 µm (the F's and ions'
-  transport and the undercut below the mask), and so do the depth and the
-  mask's wear; the trench here is 0.3 µm wider. The difference is the film:
-  ViennaPS's is a layer with a thickness (a level set over the others), and
-  its foot on the mask's wall keeps the silicon below it until the undercut
-  reaches it; here the film is a thickness per face, and the floor next to
-  the wall is bared when the rest of the floor is.
+  transport and the undercut below the mask), with it to 0.05 µm on the
+  walls, and the depth and the mask's wear agree. The undercut below the
+  mask in the first cycle is not converged in either at 25 nm (the 47 nm
+  film is two cells).
 - **Anisotropic wet etch** (`koh.py`) — KOH/TMAH bulk micromachining with an
   orientation-dependent rate: {111} planes ~100× slower meet a (100) surface at
   54.74°, so a mask opening self-organises into the classic facetted pit /

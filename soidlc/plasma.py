@@ -8,9 +8,10 @@ Each step of the Bosch cycle is a steady discharge of a planar-coil ICP reactor
   transport of the neutrals to the 150 mm silicon wafer, which F atoms etch
   thermally and under the ions, and the sheath over it, which sets the ions'
   energies;
-* the passivation step (``reactors/bosch_passivation.ferma``): c-C4F8 without
-  bias -- the built-in mechanism ``c4f8``, whose CF, CF2 and CF3 radicals reach
-  the wafer and deposit the fluorocarbon film.
+* the passivation step (``reactors/bosch_passivation.ferma``): c-C4F8, with a
+  bias if the recipe has one -- the built-in mechanism ``c4f8``, whose radicals
+  reach the wafer and deposit the fluorocarbon film, and whose ions, under a
+  bias, wear it down.
 
 ``ferma build -p ...`` sets the recipe's coil power, pressure, flow and bias
 in the reactor model, ``ferma mesh`` meshes it and ``ferma_icp`` solves the
@@ -32,7 +33,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
 _REACTORS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reactors")
@@ -41,10 +42,6 @@ PASSIVATION_REACTOR = os.path.join(_REACTORS, "bosch_passivation.ferma")
 # the Oxford Plasmalab System 100 ICP180 of recipe_physics.ZHANG2023
 ICP180_ETCH = os.path.join(_REACTORS, "icp180_etch.ferma")
 ICP180_PASSIVATION = os.path.join(_REACTORS, "icp180_passivation.ferma")
-
-# the fluorocarbon radicals that build the passivation film
-_FILM_RADICALS = ("CF", "CF2", "CF3")
-
 
 @dataclass(frozen=True)
 class EtchPlasma:
@@ -61,10 +58,15 @@ class EtchPlasma:
 @dataclass(frozen=True)
 class PassivationPlasma:
     """What the passivation step's plasma gives the wafer (SI units)."""
-    film_flux: float      # CF + CF2 + CF3 onto the wafer, m^-2 s^-1
     ion_flux: float       # positive ions onto the wafer, m^-2 s^-1
     ne: float             # electron density, m^-3
     te: float             # electron temperature, eV
+    # every neutral species onto the wafer, m^-2 s^-1 (the film's radicals
+    # among them: soidlc.film)
+    radicals: Dict[str, float] = field(default_factory=dict)
+    # the ions' mean energy at a biased wafer, eV (0: no bias; an unbiased
+    # wafer's few eV are below the film's threshold anyway)
+    ion_energy: float = 0.0
 
 
 def _species(summary: dict) -> Dict[str, float]:
@@ -77,6 +79,17 @@ def _ion_flux(fluxes: Dict[str, float]) -> float:
     return sum(v for k, v in fluxes.items() if k.endswith("+"))
 
 
+def _ion_energy(summary: dict, fluxes: Dict[str, float]) -> float:
+    """The ions' mean energy at a biased wafer (flux-weighted), eV; 0
+    without a bias."""
+    energy, weight = 0.0, 0.0
+    for ion in (summary.get("bias") or {}).get("ions", []):
+        w = fluxes.get(ion["name"], 0.0)
+        energy += w * ion["mean"]
+        weight += w
+    return energy / weight if weight > 0 else 0.0
+
+
 def etch_plasma(summary: dict) -> EtchPlasma:
     """:class:`EtchPlasma` from the ferma_icp summary of the etch step."""
     if not summary.get("converged"):
@@ -85,17 +98,13 @@ def etch_plasma(summary: dict) -> EtchPlasma:
     if not wafer.get("reacts"):
         raise RuntimeError("plasma: the etch step's wafer has no etch chemistry")
     fluxes = _species(summary)
-    energy, weight = 0.0, 0.0
-    for ion in (summary.get("bias") or {}).get("ions", []):
-        w = fluxes.get(ion["name"], 0.0)
-        energy += w * ion["mean"]
-        weight += w
-    if weight <= 0:
+    energy = _ion_energy(summary, fluxes)
+    if energy <= 0:
         raise RuntimeError("plasma: the etch step has no biased ions at the wafer")
     return EtchPlasma(
         etch_rate=wafer["etch_rate"], ion_share=wafer["ion_share"],
         f_flux=fluxes.get("F", 0.0), ion_flux=_ion_flux(fluxes),
-        ion_energy=energy / weight, ne=summary["ne_max"],
+        ion_energy=energy, ne=summary["ne_max"],
         te=summary["Te_mean"])
 
 
@@ -107,9 +116,19 @@ def passivation_plasma(summary: dict) -> PassivationPlasma:
             "plasma: the passivation step's discharge did not converge")
     fluxes = _species(summary)
     return PassivationPlasma(
-        film_flux=sum(fluxes.get(k, 0.0) for k in _FILM_RADICALS),
         ion_flux=_ion_flux(fluxes), ne=summary["ne_max"],
-        te=summary["Te_mean"])
+        te=summary["Te_mean"],
+        radicals={k: v for k, v in fluxes.items()
+                  if not k.endswith(("+", "-")) and "(s)" not in k},
+        ion_energy=_ion_energy(summary, fluxes))
+
+
+def _bias(power_w: float, voltage_v: float) -> Tuple[Tuple[str, str], ...]:
+    """A step's bias as the reactor's parameters: the voltage if given,
+    else the power (0 and 0: no bias)."""
+    if voltage_v > 0:
+        return (("P_b", "0 W"), ("V_b", "%.6g V" % voltage_v))
+    return (("P_b", "%.6g W" % power_w), ("V_b", "0 V"))
 
 
 class FermaPlasma:
@@ -134,16 +153,22 @@ class FermaPlasma:
                     and os.path.exists(self.ferma_icp))
 
     def etch(self, coil_w: float, pressure_mtorr: float, sf6_sccm: float,
-             bias_w: float) -> EtchPlasma:
+             bias_w: float, bias_v: float = 0.0) -> EtchPlasma:
+        """The etch step's plasma; its bias as power (``bias_w``, W) or, where
+        it was measured, as the sheath's RF amplitude (``bias_v``, V: the
+        tool's DC self-bias; the power is then not used)."""
         return etch_plasma(self._run(self.etch_reactor, (
             ("P_rf", "%.6g W" % coil_w), ("p", "%.6g mTorr" % pressure_mtorr),
-            ("q_sf6", "%.6g sccm" % sf6_sccm), ("P_b", "%.6g W" % bias_w))))
+            ("q_sf6", "%.6g sccm" % sf6_sccm)) + _bias(bias_w, bias_v)))
 
     def passivation(self, coil_w: float, pressure_mtorr: float,
-                    c4f8_sccm: float) -> PassivationPlasma:
+                    c4f8_sccm: float, bias_w: float = 0.0,
+                    bias_v: float = 0.0) -> PassivationPlasma:
+        """The passivation step's plasma; a bias (0: none) as in
+        :meth:`etch`."""
         return passivation_plasma(self._run(self.passivation_reactor, (
             ("P_rf", "%.6g W" % coil_w), ("p", "%.6g mTorr" % pressure_mtorr),
-            ("q_c4f8", "%.6g sccm" % c4f8_sccm))))
+            ("q_c4f8", "%.6g sccm" % c4f8_sccm)) + _bias(bias_w, bias_v)))
 
     # ------------------------------------------------------------------
     def _run(self, reactor: str, params: Tuple[Tuple[str, str], ...]) -> dict:

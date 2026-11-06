@@ -3,7 +3,7 @@
 # (ferma_icp). The tool's drawings are not published: the source is taken as its name says, a tube of 180 mm inside
 # diameter (alumina, 5 mm) with a three-turn coil around its upper half, over a 150 mm wafer; the global model needs one
 # rectangular plasma, so the source and the chamber under it are one cylinder 15 cm high. The recipe's 5 sccm of SF6
-# in this step and its 10 W of bias (the film's ion-enhanced deposition takes the ion flux, not its energy) are left out.
+# in this step are left out; its bias (10 W; P_b or V_b, 0: none) sets the energy of the ions that wear the film down.
 # soidlc overrides the parameters with -p (ferma build -p P_rf=700W ...).
 param R     = 9 cm                        # plasma (source tube) radius
 param H     = 15 cm                       # plasma height, the wafer at z = 0
@@ -12,6 +12,8 @@ param w     = 6 mm                        # turn cross-section
 param P_rf  = 700 W in 50 W .. 5 kW       # coil (generator) power
 param p     = 30 mTorr in 5 mTorr .. 200 mTorr
 param q_c4f8 = 100 sccm in 5 sccm .. 1 slm
+param P_b   = 0 W in 0 W .. 300 W         # bias power on the wafer (0: none)
+param V_b   = 0 V in 0 V .. 1 kV          # or the bias as its RF amplitude (0: none)
 let   rc    = R + t_w + 5 mm + w/2
 
 domain icp    = axisymmetric(r: 14 cm, z: 20 cm)
@@ -28,4 +30,5 @@ mesh turns3 = refine(on: coil3, size: 0.5 mm)
 
 material dep  = gas(name: "c4f8", pressure: p, temperature: 315 K, feed: [flow("C4F8", q_c4f8)])
 load     rf   = coil(on: [coil1, coil2, coil3], power: P_rf, resistance: 0.5 ohm)
-analysis run  = discharge(on: plasma, gas: dep, model: "global", wafer_diameter: 150 mm)
+analysis run  = discharge(on: plasma, gas: dep, model: "global", wafer_diameter: 150 mm,
+                          bias_power: P_b, bias_voltage: V_b, bias_frequency: 13.56 MHz)

@@ -19,6 +19,9 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+from . import film
+from .film import FilmPrecursor
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SO = os.path.join(_HERE, "etch_core.so")
 # shared level-set core + per-process velocity fields, one shared library
@@ -96,7 +99,9 @@ class SurfaceKinetics:
     film and the mask follow Kokkoris, Tserepi, Boudouvis & Gogolides, J. Vac.
     Sci. Technol. A 22, 1896 (2004) (the set Ertl & Selberherr, Microelectron.
     Eng. 87, 20 (2010) and ViennaPS's Bosch example use): volumes per
-    arriving particle and sticking probabilities.  Their ion yields are taken
+    arriving particle and sticking probabilities.  The film's radicals each
+    join it with their own probability (:mod:`soidlc.film`); the ions add
+    ``alpha_dep``.  Their ion yields are taken
     at ``e_ref`` and scaled with sqrt(E) - sqrt(``e_th_ion``) -- both energies
     are assumptions, not from that paper."""
     f_sticking: float = 0.7          # F on the free silicon sites
@@ -112,9 +117,7 @@ class SurfaceKinetics:
     beta_mask: float = 0.045e-30     # m^3 of mask per F
     e_ref: float = 100.0             # eV at which alpha_poly, alpha_mask hold
     e_th_ion: float = 15.0           # eV, the film's and the mask's threshold
-    beta_dep: float = 0.5e-30        # m^3 of film per CFx (passivation step)
     alpha_dep: float = 10e-30        # m^3 of film per ion (passivation step)
-    stick_dep: float = 0.1           # CFx lost per hit (passivation step)
     stick_poly: float = 0.1          # F lost on the film per hit
     stick_mask: float = 0.2          # F lost on the mask (and the stop layer)
     ion_sigma_deg: float = 2.0       # spread of the ions' angles
@@ -125,6 +128,24 @@ class SurfaceKinetics:
     # f_sticking 0.2); 0: Belen's
     si_alpha: float = 0.0
     si_beta: float = 0.0
+    # the film's and the mask's yields per ion against the ion's angle to the
+    # surface's normal theta: (1 + B sin^2 theta) cos theta, a sputtering
+    # yield's form (Yamamura), up to 3.9 times the normal one near 52 degrees
+    # (B 8.5) and 0 at grazing incidence, as ViennaPS's PlasmaEtching takes
+    # it (polymer 8.5, mask 9.3); negative: the same at every angle.  Off:
+    # with ViennaPS's B the scallops of Zhang et al.'s recipe come out 103 nm
+    # (measured 70 - 80) and Craigie et al.'s angles as without (the README)
+    poly_angular: float = -1.0
+    mask_angular: float = -1.0
+
+    def film_yield(self, energy: float) -> float:
+        """The film removed per ion of ``energy`` eV, m^3 (``alpha_poly`` at
+        ``e_ref``, as sqrt(E) - sqrt(``e_th_ion``); 0 below the threshold)."""
+        if energy <= self.e_th_ion:
+            return 0.0
+        return (self.alpha_poly
+                * (math.sqrt(energy) - math.sqrt(self.e_th_ion))
+                / (math.sqrt(self.e_ref) - math.sqrt(self.e_th_ion)))
 
 
 @dataclass
@@ -135,8 +156,13 @@ class BoschFluxes:
     f_flux: float                    # F, etch step, m^-2 s^-1
     ion_flux: float                  # positive ions, etch step
     ion_energy: float                # their mean energy at the wafer, eV
-    film_flux: float                 # film-forming CFx, passivation step
+    # the radicals that build the film in the passivation step (soidlc.film)
+    precursors: Tuple[FilmPrecursor, ...]
     pass_ion_flux: float             # positive ions, passivation step
+    # their mean energy at the wafer, eV: a bias on the passivation step
+    # makes its ions wear the film down (SurfaceKinetics.film_yield); 0 (or
+    # an unbiased wafer's few eV, below the film's threshold): they do not
+    pass_ion_energy: float = 0.0
     t_etch: float = 7.0              # s
     t_pass: float = 5.0              # s
     cycles: int = 40
@@ -173,8 +199,9 @@ class BoschFluxes:
                                  + math.sqrt(s.ion_eth)) ** 2
         return cls(f_flux=f_flux, ion_flux=etch.ion_flux,
                    ion_energy=etch.ion_energy,
-                   film_flux=passivation.film_flux,
-                   pass_ion_flux=passivation.ion_flux, si_energy=si_energy,
+                   precursors=film.precursors(passivation.radicals),
+                   pass_ion_flux=passivation.ion_flux,
+                   pass_ion_energy=passivation.ion_energy, si_energy=si_energy,
                    **kw)
 
     def flat_etch_rate(self) -> float:
@@ -187,20 +214,27 @@ class BoschFluxes:
         theta = sg / (sg + s.thermal + 2.0 * y * self.ion_flux)
         return theta * (0.25 * s.thermal + y * self.ion_flux) / s.n_si
 
+    def flat_growth(self) -> float:
+        """The film the radicals and the ions add to the open flat wafer in
+        the passivation step, m/s (before the ions' removal)."""
+        return (film.growth(self.precursors)
+                + self.surface.alpha_dep * self.pass_ion_flux)
+
+    def pass_removal(self) -> float:
+        """The film the passivation step's ions remove from the open flat
+        wafer, m/s (a bias on that step)."""
+        return self.surface.film_yield(self.pass_ion_energy) * self.pass_ion_flux
+
     def flat_film(self) -> float:
         """Film one passivation step leaves on the open flat wafer, m."""
-        s = self.surface
-        return (s.beta_dep * self.film_flux
-                + s.alpha_dep * self.pass_ion_flux) * self.t_pass
+        return max(0.0, self.flat_growth() - self.pass_removal()) * self.t_pass
 
     def flat_strip(self) -> float:
         """Rate at which the etch step wears the film off the open flat
         wafer, m/s (the ions and F)."""
         s = self.surface
-        y = (s.alpha_poly * (math.sqrt(self.ion_energy) - math.sqrt(s.e_th_ion))
-             / (math.sqrt(s.e_ref) - math.sqrt(s.e_th_ion))
-             if self.ion_energy > s.e_th_ion else 0.0)
-        return y * self.ion_flux + s.beta_poly * self.f_flux
+        return (s.film_yield(self.ion_energy) * self.ion_flux
+                + s.beta_poly * self.f_flux)
 
     def breakthrough(self) -> float:
         """Time the etch step takes to clear one passivation step's film off
@@ -209,29 +243,47 @@ class BoschFluxes:
         return self.flat_film() / strip if strip > 0 else math.inf
 
     def calibrated(self, breakthrough: float) -> "BoschFluxes":
-        """These fluxes with the film's deposition (``beta_dep``,
-        ``alpha_dep``) scaled so that the open flat wafer's film clears in
-        ``breakthrough`` seconds of the etch step -- the one constant to take
-        from the tool (the published volumes per particle come from another
-        reactor; the film's growth is the least transferable of them)."""
+        """These fluxes with the film's growth (every radical's and the ions'
+        film, ``alpha_dep``) scaled so that the open flat wafer's film clears
+        in ``breakthrough`` seconds of the etch step -- the one constant to
+        take from the tool (the film's growth is the least transferable
+        number: the radicals' fluxes and the film's density as much as the
+        sticking).  The passivation's ions' removal is not scaled: it is
+        their yield, the same as the etch step's.  The scale
+        (:meth:`growth_scale`) says how far the plasma's fluxes and the
+        measured sticking are from the tool's."""
+        want = breakthrough * self.flat_strip() / self.t_pass
+        return self.growth_scaled((want + self.pass_removal())
+                                  / self.flat_growth())
+
+    def growth_scaled(self, k: float) -> "BoschFluxes":
+        """These fluxes with every radical's film and the ions' scaled by k
+        (e.g. another recipe's :meth:`growth_scale` on the same tool)."""
         from dataclasses import replace
-        k = breakthrough / self.breakthrough()
-        s = replace(self.surface, beta_dep=self.surface.beta_dep * k,
-                    alpha_dep=self.surface.alpha_dep * k)
-        return replace(self, surface=s)
+        s = replace(self.surface, alpha_dep=self.surface.alpha_dep * k)
+        pre = tuple(replace(p, volume=p.volume * k) for p in self.precursors)
+        return replace(self, surface=s, precursors=pre)
+
+    def growth_scale(self, reference: "BoschFluxes") -> float:
+        """The film's growth (:meth:`flat_growth`) relative to
+        ``reference``'s (e.g. these fluxes before :meth:`calibrated`)."""
+        return self.flat_growth() / reference.flat_growth()
 
     def _params(self):
         s = self.surface
+        pre = [x for p in self.precursors
+               for x in (p.flux, p.sticking, p.volume)]
         return [self.cycles, self.t_etch, self.t_pass, self.f_flux,
-                self.ion_flux, self.ion_energy, self.film_flux,
-                self.pass_ion_flux, s.f_sticking, s.thermal, s.ion_a,
-                s.ion_eth, s.alpha_poly, s.beta_poly, s.alpha_mask,
-                s.beta_mask, s.e_ref, s.e_th_ion, s.beta_dep, s.alpha_dep,
-                s.stick_dep, s.stick_poly, s.stick_mask, s.ion_sigma_deg,
+                self.ion_flux, self.ion_energy, self.pass_ion_flux,
+                s.f_sticking, s.thermal, s.ion_a, s.ion_eth, s.alpha_poly,
+                s.beta_poly, s.alpha_mask, s.beta_mask, s.e_ref, s.e_th_ion,
+                s.alpha_dep, s.stick_poly, s.stick_mask, s.ion_sigma_deg,
                 self.rays, self.ion_angles, s.n_si, self.cfl,
                 self.reinit_stride,
                 self.si_energy if self.si_energy is not None
-                else self.ion_energy, s.si_alpha, s.si_beta]
+                else self.ion_energy, s.si_alpha, s.si_beta,
+                self.pass_ion_energy, s.poly_angular, s.mask_angular,
+                len(self.precursors)] + pre
 
 
 @dataclass
