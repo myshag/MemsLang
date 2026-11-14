@@ -9,8 +9,14 @@
  *     not stick: G_s = G0 F_s,sky + sum_t F_st (1 - S_t) G_t, with the view
  *     factors F (cosine law; in the cross-section of a long trench 1/2 cos phi
  *     dphi) from rays cast from every surface point, solved with BiCGSTAB;
- *   - ions come from above with a Gaussian spread of angles `sigma` (no
- *     reflection): flux per unit area sum_a w_a vis_a max(0, -d_a.n) / cos a;
+ *   - ions come from above with a Gaussian spread of angles `sigma`: flux per
+ *     unit area sum_a w_a vis_a max(0, -d_a.n) / cos a.  An ion that meets
+ *     the surface at theta from its normal is reflected specularly, keeping
+ *     its energy, with the probability (theta - RMIN) / (90 deg - RMIN)
+ *     (none below RMIN; RMIN >= 90 deg: no reflection), as ViennaPS's ions
+ *     are; the reflected share is traced from the source forward, beams half
+ *     a cell apart, up to RBOUNCE reflections, and each surface point gets
+ *     the ions it takes up (the arriving flux less the reflected share);
  *     the film's and the mask's yields per ion depend on each ion's angle to
  *     the surface's normal theta, as a sputtering yield does (Yamamura's form,
  *     as ViennaPS's PlasmaEtching takes it): f = (1 + B sin^2 theta) cos theta,
@@ -71,7 +77,7 @@ enum {
     P_SF, P_KTH, P_ASI, P_ETHSI, P_APOLY, P_BPOLY, P_AMASK, P_BMASK,
     P_EREF, P_ETHION, P_ADEP, P_SPOLY, P_SMASK, P_SIGMA,
     P_NRAYS, P_NIONS, P_NSI, P_CFL, P_REINIT, P_ESI, P_LSIA, P_LSIB, P_EP,
-    P_PANG, P_MANG, P_NPREC, P_N
+    P_PANG, P_MANG, P_RMIN, P_RBOUNCE, P_NPREC, P_N
 };
 enum { O_ETCH0, O_THETA0, O_FILM0, O_CLEAR0, O_FLUXCALLS, O_STEPS, O_N };
 
@@ -196,25 +202,33 @@ static int nearest_sp(const Surf *s, const int *cell2sp, int nx, int nz,
 /* march a ray from (x, z) along (ux, uz) (grid units): SKY when it leaves
  * through the top, else the surface point it hits (LOST if none is found);
  * the side walls of the domain mirror it */
-static int march(const double *phi, const Surf *s, const int *cell2sp, int nx,
-                 int nz, double x, double z, double ux, double uz) {
+static int march_dir(const double *phi, const Surf *s, const int *cell2sp,
+                     int nx, int nz, double x, double z, double *pux,
+                     double *puz) {
     const double step = 0.5;
+    double ux = *pux, uz = *puz;
     int nmax = 8 * (nx + nz);
     double px = x, pz = z;
     for (int it = 0; it < nmax; it++) {
         double qx = px + ux * step, qz = pz + uz * step;
-        if (qz < 0.0) return SKY;
+        if (qz < 0.0) { *pux = ux; *puz = uz; return SKY; }
         if (qx < 0.0) { qx = -qx; ux = -ux; }
         if (qx >= nx) { qx = 2.0 * nx - qx - 1e-9; ux = -ux; }
         if (qz >= nz) return LOST;
         int ci = (int)qx, cj = (int)qz;
         if (phi[IDX(ci, cj)] <= 0.0) {
             int m = nearest_sp(s, cell2sp, nx, nz, px, pz, 2);
+            *pux = ux; *puz = uz;
             return m >= 0 ? m : LOST;
         }
         px = qx; pz = qz;
     }
     return LOST;
+}
+
+static int march(const double *phi, const Surf *s, const int *cell2sp, int nx,
+                 int nz, double x, double z, double ux, double uz) {
+    return march_dir(phi, s, cell2sp, nx, nz, x, z, &ux, &uz);
 }
 
 typedef struct {
@@ -232,9 +246,18 @@ static double ion_removing(const Views *v, int m, double B) {
     return B < 0.0 ? v->ion[m] : (1.0 + B) * v->ion2[m] - B * v->ion4[m];
 }
 
+/* the share of the ions meeting the surface at cos(theta) = c that it
+ * reflects (rmin: the angle below which none is, radians) */
+static double reflected_share(double c, double rmin) {
+    if (rmin >= 0.5 * M_PI) return 0.0;
+    double th = acos(c > 1.0 ? 1.0 : c);
+    double p = (th - rmin) / (0.5 * M_PI - rmin);
+    return p < 0.0 ? 0.0 : p > 1.0 ? 1.0 : p;
+}
+
 static void views_compute(const double *phi, const Surf *s, const int *cell2sp,
                           int nx, int nz, int nr, int ni, double sigma,
-                          Views *v) {
+                          double rmin, int nbounce, Views *v) {
     int n = s->n;
     v->nr = nr;
     v->hit = realloc(v->hit, sizeof(int) * (size_t)n * nr);
@@ -275,12 +298,50 @@ static void views_compute(const double *phi, const Surf *s, const int *cell2sp,
             if (c <= 0.0) continue;
             if (c > 1.0) c = 1.0;
             if (march(phi, s, cell2sp, nx, nz, x0, z0, -dxi, -dzi) == SKY) {
-                double q = w[a] * c / dzi;
+                double q = w[a] * c / dzi * (1.0 - reflected_share(c, rmin));
                 f += q, f2 += q * c, f4 += q * c * c * c;
             }
         }
         v->ion[m] = f, v->ion2[m] = f2, v->ion4[m] = f4;
     }
+    if (rmin >= 0.5 * M_PI || nbounce < 1) return;
+    /* the reflected ions: beams from the source half a cell apart, each
+     * carrying w_a * 0.5 (the flux per unit width of the open flat wafer's),
+     * to their first surface point, then reflected and followed; a surface
+     * point takes up what is not reflected again, per unit of its length
+     * (one cell along the axis its normal is nearest to: 1 / max(|nx|, |nz|)) */
+    const double beam = 0.5;
+    int nb = (int)(nx / beam);
+    #pragma omp parallel for schedule(dynamic, 8) collapse(2)
+    for (int a = 0; a < ni; a++)
+        for (int b = 0; b < nb; b++) {
+            double ux = sin(ang[a]), uz = cos(ang[a]);
+            double W = w[a] * beam;
+            int m = march_dir(phi, s, cell2sp, nx, nz, (b + 0.5) * beam, 1e-6,
+                              &ux, &uz);
+            for (int k = 0; k <= nbounce && m >= 0; k++) {
+                double c = -(ux * s->nx[m] + uz * s->nz[m]);
+                if (c <= 0.0) break;
+                if (c > 1.0) c = 1.0;
+                double p = reflected_share(c, rmin);
+                if (k > 0) {     /* the first arrival is the direct flux's */
+                    double len = 1.0 / fmax(fabs(s->nx[m]), fabs(s->nz[m]));
+                    double q = W * (1.0 - p) / len;
+                    #pragma omp atomic
+                    v->ion[m] += q;
+                    #pragma omp atomic
+                    v->ion2[m] += q * c;
+                    #pragma omp atomic
+                    v->ion4[m] += q * c * c * c;
+                }
+                W *= p;
+                if (W <= 1e-12 || k == nbounce) break;
+                ux += 2.0 * c * s->nx[m], uz += 2.0 * c * s->nz[m];
+                double x0 = s->x[m] + 0.75 * s->nx[m], z0 = s->z[m] + 0.75 * s->nz[m];
+                int t = march_dir(phi, s, cell2sp, nx, nz, x0, z0, &ux, &uz);
+                m = t == m ? LOST : t;
+            }
+        }
 }
 
 static void views_free(Views *v) {
@@ -501,6 +562,7 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
     int cycles = (int)p[P_CYCLES], nr = (int)p[P_NRAYS], ni = (int)p[P_NIONS];
     int stride = (int)p[P_REINIT] > 0 ? (int)p[P_REINIT] : 2;
     double sigma = p[P_SIGMA] * M_PI / 180.0, dxm = dx * 1e-6;
+    double rmin = p[P_RMIN] * M_PI / 180.0;
     double kpoly = p[P_APOLY] / dmax(1e-12, sqrt(p[P_EREF]) - sqrt(p[P_ETHION]));
     double kmask = p[P_AMASK] / dmax(1e-12, sqrt(p[P_EREF]) - sqrt(p[P_ETHION]));
     double Ypoly = ion_yield(p[P_EE], kpoly, p[P_ETHION]);
@@ -532,7 +594,8 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
         while (t < p[P_TPASS] - 1e-12) {
             if (moved > 0.5 * dx) {
                 find_surface(top, phi, mask, nx, nz, dx, j_box, &s, cell2sp);
-                views_compute(top, &s, cell2sp, nx, nz, nr, ni, sigma, &v);
+                views_compute(top, &s, cell2sp, nx, nz, nr, ni, sigma, rmin,
+                              (int)p[P_RBOUNCE], &v);
                 state_size(&st, s.n);
                 /* the growth (st.v, m/s): the ions', then each radical's with
                  * its own sticking (its transport into the feature too); the
@@ -599,7 +662,8 @@ static void drie_core(double *phi, const unsigned char *mask, int nx, int nz,
             if (moved > 0.5 * dx || bare_last < 0
                 || abs(bare - bare_last) > s.n / 20) {
                 find_surface(top, phi, mask, nx, nz, dx, j_box, &s, cell2sp);
-                views_compute(top, &s, cell2sp, nx, nz, nr, ni, sigma, &v);
+                views_compute(top, &s, cell2sp, nx, nz, nr, ni, sigma, rmin,
+                              (int)p[P_RBOUNCE], &v);
                 state_size(&st, s.n);
                 etch_fluxes(p, &s, &v, cell2sp, nx, nz, &st);
                 out[O_FLUXCALLS] += 1;

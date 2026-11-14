@@ -110,6 +110,13 @@ class SurfaceKinetics:
     # (measured 70 - 80) and Craigie et al.'s angles as without (the README)
     poly_angular: float = -1.0
     mask_angular: float = -1.0
+    # ions meeting the surface at theta from its normal are reflected
+    # specularly, keeping their energy, with the probability (theta -
+    # ion_reflection_deg) / (90 - ion_reflection_deg), followed through
+    # ion_bounces reflections: ViennaPS's ions (its Bosch example's 0, its
+    # PlasmaEtching's 70); 90: none
+    ion_reflection_deg: float = 90.0
+    ion_bounces: int = 3
 
     def film_yield(self, energy: float) -> float:
         """The film removed per ion of ``energy`` eV, m^3 (``alpha_poly`` at
@@ -256,6 +263,7 @@ class BoschFluxes:
                 self.si_energy if self.si_energy is not None
                 else self.ion_energy, s.si_alpha, s.si_beta,
                 self.pass_ion_energy, s.poly_angular, s.mask_angular,
+                s.ion_reflection_deg, s.ion_bounces,
                 len(self.precursors)] + pre
 
 

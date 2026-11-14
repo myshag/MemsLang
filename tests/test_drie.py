@@ -185,6 +185,36 @@ class TestAngularYield(unittest.TestCase):
                                b.diagnostics["clear_time"], delta=0.02)
 
 
+class TestIonReflection(unittest.TestCase):
+    """Ions reflected where they meet the surface at a grazing angle
+    (SurfaceKinetics.ion_reflection_deg; off by default): in a narrow
+    opening under a thick mask, the ions that a spread of 20 degrees sends
+    onto the mask's walls glance off them onto the bottom, which etches
+    deeper; on an open flat surface nothing reaches the threshold."""
+
+    @staticmethod
+    def _run(reflection, opening, mask):
+        f = _reference(t_pass=0.0, t_etch=40.0, cycles=1)
+        f = replace(f, surface=replace(
+            f.surface, ion_sigma_deg=20.0, ion_reflection_deg=reflection,
+            si_alpha=270e-30, si_beta=0.0))     # silicon etched by the ions
+        r = etch.simulate([opening], 10.0, 2.0, dx=0.05, mask_thick=mask,
+                          box=False, fluxes=f)
+        i = int(5.0 / r.dx)
+        col = [r.phi[i + r.nx * j] for j in range(r.nz)]
+        return next(j - c / (col[j + 1] - c) for j, c in enumerate(col[:-1])
+                    if c > 0 >= col[j + 1]) * r.dx
+
+    def test_the_mask_walls_send_ions_to_the_bottom(self):
+        off = self._run(90.0, (4.0, 6.0), 4.0)
+        self.assertGreater(self._run(0.0, (4.0, 6.0), 4.0), off + 0.03)
+        self.assertGreater(self._run(70.0, (4.0, 6.0), 4.0), off + 0.005)
+
+    def test_an_open_flat_surface_as_without(self):
+        self.assertEqual(self._run(70.0, (0.0, 10.0), 0.1),
+                         self._run(90.0, (0.0, 10.0), 0.1))
+
+
 class TestTransport(unittest.TestCase):
     def test_rie_lag(self):
         # without the film F limits the etch: a 1 um trench etches slower
